@@ -23,7 +23,12 @@ app.use('/public', express.static(path.join(__dirname, '../public')));
 app.use('/api', apiRoutes);
 
 app.get('/', (req, res) => {
-  res.json({ message: 'Einsdream Backend API is running' });
+  res.json({
+    message: 'Einsdream Backend API is running',
+    version: '1.0.5',
+    dbStatus: mongoose.connection.readyState === 1 ? 'connected' : 'connecting/disconnected',
+    timestamp: new Date().toISOString()
+  });
 });
 
 // Database connection
