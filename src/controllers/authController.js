@@ -39,34 +39,74 @@ export const register = async (req, res) => {
 
 // Basic Email/Password Login
 export const login = async (req, res) => {
+    console.log('[LOGIN] Auth process started for:', req.body?.email);
     try {
         const { email, password } = req.body;
 
         if (mongoose.connection.readyState !== 1) {
+            console.error('[LOGIN] DB not ready. State:', mongoose.connection.readyState);
             return res.status(503).json({
                 message: 'Database not ready',
-                error: 'The server is unable to connect to MongoDB. Please check MongoDB Atlas IP Whitelist (0.0.0.0/0) and Environment Variables.'
+                error: 'The server is unable to connect to MongoDB. Please check MongoDB Atlas IP Whitelist (0.0.0.0/0).'
             });
         }
 
+        console.log('[LOGIN] Step 1: Finding user...');
         const user = await User.findOne({ email });
-        // MVP: plain string compare, use bcrypt in prod
-        if (!user || user.password !== password) {
+
+        if (!user) {
+            console.log('[LOGIN] Failed: User not found:', email);
             return res.status(400).json({ message: 'Invalid credentials' });
         }
 
-        const token = jwt.sign({ userId: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '7d' });
+        // MVP: plain string compare, use bcrypt in prod
+        if (user.password !== password) {
+            console.log('[LOGIN] Failed: Password mismatch for:', email);
+            return res.status(400).json({ message: 'Invalid credentials' });
+        }
 
-        // Record login log
-        await LoginLog.create({
-            userId: user._id,
-            loginMethod: 'email',
-            ipAddress: req.ip
+        console.log('[LOGIN] Step 2: Signing JWT Token...');
+        if (!process.env.JWT_SECRET) {
+            console.error('[LOGIN] CRITICAL: JWT_SECRET is missing in environment!');
+            throw new Error('JWT_SECRET IS MISSING');
+        }
+
+        const token = jwt.sign(
+            { userId: user._id, role: user.role },
+            process.env.JWT_SECRET,
+            { expiresIn: '7d' }
+        );
+
+        console.log('[LOGIN] Step 3: Saving LoginLog audit...');
+        try {
+            await LoginLog.create({
+                userId: user._id,
+                loginMethod: 'email',
+                ipAddress: req.ip || req.headers['x-forwarded-for'] || 'unknown'
+            });
+        } catch (logErr) {
+            console.warn('[LOGIN] Non-critical warning: Audit log failed:', logErr.message);
+        }
+
+        console.log('[LOGIN] Success for user:', email);
+        res.json({
+            token,
+            user: {
+                id: user._id,
+                email: user.email,
+                role: user.role,
+                phone: user.phone,
+                consentGiven: user.consentGiven
+            }
         });
-
-        res.json({ token, user: { id: user._id, email: user.email, role: user.role, phone: user.phone, consentGiven: user.consentGiven } });
     } catch (error) {
-        res.status(500).json({ message: 'Error logging in', error: error.message });
+        console.error('[LOGIN] CRITICAL EXCEPTION:', error.message);
+        console.error(error.stack);
+        res.status(500).json({
+            message: 'Internal Server Error during login',
+            error: error.message,
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
     }
 };
 
