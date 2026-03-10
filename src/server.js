@@ -26,7 +26,7 @@ app.get('/', async (req, res) => {
   await connectDB();
   res.json({
     message: 'Einsdream Backend API is running',
-    version: '1.0.8',
+    version: '1.1.0',
     dbStatus: mongoose.connection.readyState === 1 ? 'connected' : 'connecting/disconnected',
     dbError: lastDbError,
     timestamp: new Date().toISOString()

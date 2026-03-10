@@ -44,14 +44,7 @@ export const login = async (req, res) => {
     try {
         const { email, password } = req.body;
 
-        if (mongoose.connection.readyState !== 1) {
-            console.error('[LOGIN] DB not ready. State:', mongoose.connection.readyState);
-            return res.status(503).json({
-                message: 'Database not ready',
-                error: 'The server is unable to connect to MongoDB. Please check MongoDB Atlas IP Whitelist (0.0.0.0/0).'
-            });
-        }
-
+        // Mongoose will buffer queries until connected
         console.log('[LOGIN] Step 1: Finding user...');
         const user = await User.findOne({ email });
 
