@@ -28,12 +28,16 @@ app.get('/', (req, res) => {
 
 // Database connection
 const connectDB = async () => {
+  if (!process.env.MONGODB_URI) {
+    console.error('CRITICAL ERROR: MONGODB_URI is not defined in environment variables.');
+    return;
+  }
   try {
     if (mongoose.connection.readyState >= 1) return;
     await mongoose.connect(process.env.MONGODB_URI);
-    console.log('Connected to MongoDB');
+    console.log('Connected to MongoDB successfully');
   } catch (error) {
-    console.error('Error connecting to MongoDB:', error);
+    console.error('MongoDB connection error:', error);
   }
 };
 
@@ -45,7 +49,7 @@ if (process.env.VERCEL !== '1') {
     });
   });
 } else {
-  // In Vercel, we just ensure the DB is connecting
+  // In Vercel, we call it immediately. Mongoose will buffer queries until connected.
   connectDB();
 }
 
