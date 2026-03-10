@@ -22,10 +22,11 @@ app.use('/public', express.static(path.join(__dirname, '../public')));
 // Routes
 app.use('/api', apiRoutes);
 
-app.get('/', (req, res) => {
+app.get('/', async (req, res) => {
+  await connectDB();
   res.json({
     message: 'Einsdream Backend API is running',
-    version: '1.0.6',
+    version: '1.0.7',
     dbStatus: mongoose.connection.readyState === 1 ? 'connected' : 'connecting/disconnected',
     dbError: lastDbError,
     timestamp: new Date().toISOString()
