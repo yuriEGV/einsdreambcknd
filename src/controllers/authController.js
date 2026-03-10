@@ -42,6 +42,13 @@ export const login = async (req, res) => {
     try {
         const { email, password } = req.body;
 
+        if (mongoose.connection.readyState !== 1) {
+            return res.status(503).json({
+                message: 'Database not ready',
+                error: 'The server is unable to connect to MongoDB. Please check MongoDB Atlas IP Whitelist (0.0.0.0/0) and Environment Variables.'
+            });
+        }
+
         const user = await User.findOne({ email });
         // MVP: plain string compare, use bcrypt in prod
         if (!user || user.password !== password) {

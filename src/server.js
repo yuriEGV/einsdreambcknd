@@ -31,18 +31,27 @@ app.get('/', (req, res) => {
   });
 });
 
+let lastDbError = null;
+
 // Database connection
 const connectDB = async () => {
   if (!process.env.MONGODB_URI) {
-    console.error('CRITICAL ERROR: MONGODB_URI is not defined in environment variables.');
+    const msg = 'CRITICAL ERROR: MONGODB_URI is not defined in environment variables.';
+    console.error(msg);
+    lastDbError = msg;
     return;
   }
   try {
     if (mongoose.connection.readyState >= 1) return;
-    await mongoose.connect(process.env.MONGODB_URI);
+    console.log('Attempting to connect to MongoDB...');
+    await mongoose.connect(process.env.MONGODB_URI, {
+      serverSelectionTimeoutMS: 8000, // 8 seconds timeout
+    });
     console.log('Connected to MongoDB successfully');
+    lastDbError = null;
   } catch (error) {
-    console.error('MongoDB connection error:', error);
+    console.error('MongoDB connection error:', error.message);
+    lastDbError = error.message;
   }
 };
 
