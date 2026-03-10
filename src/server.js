@@ -53,4 +53,15 @@ if (process.env.VERCEL !== '1') {
   connectDB();
 }
 
+// Global Error Handler
+app.use((err, req, res, next) => {
+  console.error('=== SERVER ERROR EXPLOSION ===');
+  console.error(err.stack);
+  res.status(500).json({
+    message: 'Internal Server Error',
+    error: err.message,
+    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+  });
+});
+
 export default app;
