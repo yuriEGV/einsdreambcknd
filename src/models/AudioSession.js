@@ -28,4 +28,4 @@ const audioSessionSchema = new mongoose.Schema({
     }
 });
 
-export default mongoose.model('AudioSession', audioSessionSchema);
+export default mongoose.models.AudioSession || mongoose.model('AudioSession', audioSessionSchema);

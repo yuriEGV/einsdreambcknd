@@ -20,4 +20,4 @@ const loginLogSchema = new mongoose.Schema({
     }
 });
 
-export default mongoose.model('LoginLog', loginLogSchema);
+export default mongoose.models.LoginLog || mongoose.model('LoginLog', loginLogSchema);
