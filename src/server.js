@@ -25,8 +25,9 @@ app.use('/api', apiRoutes);
 app.get('/', (req, res) => {
   res.json({
     message: 'Einsdream Backend API is running',
-    version: '1.0.5',
+    version: '1.0.6',
     dbStatus: mongoose.connection.readyState === 1 ? 'connected' : 'connecting/disconnected',
+    dbError: lastDbError,
     timestamp: new Date().toISOString()
   });
 });
