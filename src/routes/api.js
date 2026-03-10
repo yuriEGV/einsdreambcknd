@@ -16,9 +16,17 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Setup multer for local storage strategy
-const uploadDir = path.join(__dirname, '../../uploads');
+const isVercel = process.env.VERCEL === '1';
+const uploadDir = isVercel
+    ? path.join('/tmp', 'uploads')
+    : path.join(__dirname, '../../uploads');
+
 if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
+    try {
+        fs.mkdirSync(uploadDir, { recursive: true });
+    } catch (err) {
+        console.error('Failed to create upload directory:', err);
+    }
 }
 
 const storage = multer.diskStorage({
