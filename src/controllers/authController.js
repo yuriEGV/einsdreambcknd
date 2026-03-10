@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import User from '../models/User.js';
 import LoginLog from '../models/LoginLog.js';
 import jwt from 'jsonwebtoken';
