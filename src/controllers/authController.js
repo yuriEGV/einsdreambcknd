@@ -103,7 +103,7 @@ export const login = async (req, res) => {
         console.error('[LOGIN] CRITICAL EXCEPTION:', error.message);
         console.error(error.stack);
         res.status(500).json({
-            message: 'Internal Server Error during login',
+            message: `Login error: ${error.message}`,
             error: error.message,
             stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
         });
