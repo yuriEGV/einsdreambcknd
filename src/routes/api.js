@@ -16,16 +16,23 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Setup multer for local storage strategy
-const isVercel = process.env.VERCEL === '1';
+// Setup multer for local storage strategy
+const isVercel = !!(process.env.VERCEL || process.env.VERCEL_ENV || process.env.NOW_REGION);
 const uploadDir = isVercel
     ? path.join('/tmp', 'uploads')
     : path.join(__dirname, '../../uploads');
 
+// Only attempt to create directory if not on Vercel or if we're in /tmp
 if (!fs.existsSync(uploadDir)) {
     try {
         fs.mkdirSync(uploadDir, { recursive: true });
+        console.log(`Created upload directory at: ${uploadDir}`);
     } catch (err) {
-        console.error('Failed to create upload directory:', err);
+        if (isVercel) {
+            console.warn('Vercel: Could not create upload directory, but continuing...', err.message);
+        } else {
+            console.error('Failed to create upload directory:', err);
+        }
     }
 }
 
