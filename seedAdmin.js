@@ -1,13 +1,10 @@
-require('dotenv').config();
-const mongoose = require('mongoose');
-const User = require('./src/models/User');
+import 'dotenv/config';
+import mongoose from 'mongoose';
+import User from './src/models/User.js';
 
 const seedAdmin = async () => {
     try {
-        await mongoose.connect(process.env.MONGODB_URI, {
-            useNewUrlParser: true,
-            useUnifiedTopology: true,
-        });
+        await mongoose.connect(process.env.MONGODB_URI);
         console.log('Connected to MongoDB');
 
         const adminEmail = 'yuri@einsdream.cl';
