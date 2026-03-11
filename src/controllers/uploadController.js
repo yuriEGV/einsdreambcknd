@@ -1,6 +1,7 @@
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Storage } from '@google-cloud/storage';
+import fs from 'fs';
 import AudioSession from '../models/AudioSession.js';
 
 const provider = process.env.STORAGE_PROVIDER || 'local';
@@ -67,11 +68,18 @@ export const handleLocalUpload = async (req, res) => {
         }
 
         // The mobile client just sends the file over Form Data.
-        // The key generated locally is saved based on the filename assigned by multer
-        // We send back the local fileKey (path)
+        // On Vercel, we must convert this temporary file to base64 and return it
+        // so the client can save it in the metadata request.
+        const filePath = req.file.path;
+        const fileBuffer = fs.readFileSync(filePath);
+        const base64Data = \`data:\${req.file.mimetype};base64,\${fileBuffer.toString('base64')}\`;
+        
+        // Clean up temp file
+        try { fs.unlinkSync(filePath); } catch(e) { console.error('Failed to delete temp file:', e); }
+
         const fileKey = req.file.filename;
 
-        res.json({ message: 'File uploaded locally successfully', fileKey });
+        res.json({ message: 'File uploaded locally successfully', fileKey, fileData: base64Data });
     } catch (error) {
         res.status(500).json({ message: 'Local upload error', error: error.message });
     }
@@ -79,11 +87,12 @@ export const handleLocalUpload = async (req, res) => {
 
 export const saveMetadata = async (req, res) => {
     try {
-        const { s3Key, duration, deviceModel, eventType } = req.body;
+        const { s3Key, duration, deviceModel, eventType, audioBase64 } = req.body;
 
         const newSession = new AudioSession({
             userId: req.user.userId,
             s3Key, // Note: s3Key now actually means 'fileKey' globally for the MVP schema
+            audioBase64,
             duration,
             deviceModel,
             eventType: eventType || 'unknown'

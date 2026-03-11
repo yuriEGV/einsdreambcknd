@@ -10,6 +10,10 @@ const audioSessionSchema = new mongoose.Schema({
         type: String,
         required: true
     },
+    audioBase64: {
+        type: String,
+        // Will be used when provider is 'local' on serverless environments
+    },
     duration: {
         type: Number, // duration in seconds
         required: true
