@@ -34,27 +34,34 @@ app.get('/', async (req, res) => {
   });
 });
 
-let lastDbError = null;
+let cachedConnection = null;
 
 // Database connection
 const connectDB = async () => {
+  if (cachedConnection) return cachedConnection;
+
   if (!process.env.MONGODB_URI) {
     const msg = 'CRITICAL ERROR: MONGODB_URI is not defined in environment variables.';
     console.error(msg);
     lastDbError = msg;
     return;
   }
+
   try {
-    if (mongoose.connection.readyState >= 1) return;
     console.log('Attempting to connect to MongoDB...');
-    await mongoose.connect(process.env.MONGODB_URI, {
-      serverSelectionTimeoutMS: 8000, // 8 seconds timeout
+    cachedConnection = await mongoose.connect(process.env.MONGODB_URI, {
+      serverSelectionTimeoutMS: 15000,
+      socketTimeoutMS: 45000,
+      connectTimeoutMS: 15000,
     });
     console.log('Connected to MongoDB successfully');
     lastDbError = null;
+    return cachedConnection;
   } catch (error) {
     console.error('MongoDB connection error:', error.message);
     lastDbError = error.message;
+    cachedConnection = null;
+    throw error;
   }
 };
 
@@ -65,10 +72,20 @@ if (process.env.VERCEL !== '1') {
       console.log(`Server running on port ${PORT}`);
     });
   });
-} else {
-  // In Vercel, we call it immediately. Mongoose will buffer queries until connected.
-  connectDB();
 }
+
+// Middleware to ensure DB connection on every API request for Vercel compatibility
+app.use('/api', async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (err) {
+    res.status(503).json({
+      message: 'Database connection failed',
+      error: err.message
+    });
+  }
+});
 
 // Global Error Handler
 app.use((err, req, res, next) => {
