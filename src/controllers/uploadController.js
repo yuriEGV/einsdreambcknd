@@ -88,7 +88,7 @@ export const handleLocalUpload = async (req, res) => {
 export const saveMetadata = async (req, res) => {
     try {
         const { s3Key, duration, deviceModel, eventType, audioBase64 } = req.body;
-        console.log(`Saving metadata for user ${req.user.userId}. Audio present: ${!!audioBase64}`);
+        console.log(`Saving metadata for user ${req.user.userId}. Audio size: ${audioBase64 ? Math.round(audioBase64.length / 1024) : 0} KB`);
 
         const newSession = new AudioSession({
             userId: req.user.userId,
