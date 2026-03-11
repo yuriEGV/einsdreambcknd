@@ -77,11 +77,25 @@ if (process.env.VERCEL !== '1') {
 // Middleware to ensure DB connection on every API request for Vercel compatibility
 app.use('/api', async (req, res, next) => {
   try {
-    await connectDB();
+    console.log(`[API REQUEST] Ensuring DB connection... State: ${mongoose.connection.readyState}`);
+
+    // Race the connection against a timeout to avoid Vercel hangs
+    const connPromise = connectDB();
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Database connection timeout (10s)')), 10000)
+    );
+
+    await Promise.race([connPromise, timeoutPromise]);
+
+    if (mongoose.connection.readyState !== 1) {
+      throw new Error(`Database not ready. State: ${mongoose.connection.readyState}`);
+    }
+
     next();
   } catch (err) {
+    console.error('[API ERROR] DB Connection Guard failed:', err.message);
     res.status(503).json({
-      message: 'Database connection failed',
+      message: 'Database connection failed or restricted. Check MongoDB Atlas IP Access List.',
       error: err.message
     });
   }
