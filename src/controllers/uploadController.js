@@ -72,10 +72,10 @@ export const handleLocalUpload = async (req, res) => {
         // so the client can save it in the metadata request.
         const filePath = req.file.path;
         const fileBuffer = fs.readFileSync(filePath);
-        const base64Data = \`data:\${req.file.mimetype};base64,\${fileBuffer.toString('base64')}\`;
-        
+        const base64Data = `data:${req.file.mimetype};base64,${fileBuffer.toString('base64')}`;
+
         // Clean up temp file
-        try { fs.unlinkSync(filePath); } catch(e) { console.error('Failed to delete temp file:', e); }
+        try { fs.unlinkSync(filePath); } catch (e) { console.error('Failed to delete temp file:', e); }
 
         const fileKey = req.file.filename;
 
