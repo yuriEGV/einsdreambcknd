@@ -17,6 +17,9 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
+// Disable Mongoose buffering globally for serverless environments
+mongoose.set('bufferCommands', false);
+
 // Serve static files from the public directory (for APK download etc.)
 app.use('/public', express.static(path.join(__dirname, '../public')));
 
@@ -48,11 +51,11 @@ const connectDB = async () => {
   }
 
   try {
-    console.log('Attempting to connect to MongoDB...');
+    console.log('Attempting to connect to MongoDB (no buffering)...');
     cachedConnection = await mongoose.connect(process.env.MONGODB_URI, {
-      serverSelectionTimeoutMS: 15000,
-      socketTimeoutMS: 45000,
-      connectTimeoutMS: 15000,
+      serverSelectionTimeoutMS: 5000,
+      connectTimeoutMS: 5000,
+      socketTimeoutMS: 30000,
     });
     console.log('Connected to MongoDB successfully');
     lastDbError = null;
