@@ -4,7 +4,7 @@ import AudioSession from '../models/AudioSession.js';
 
 export const getUsers = async (req, res) => {
     try {
-        const users = await User.find().select('-password').sort({ createdAt: -1 });
+        const users = await User.find().select('-password').sort({ createdAt: -1 }).lean();
         res.json(users);
     } catch (error) {
         res.status(500).json({ message: 'Error fetching users', error: error.message });
@@ -13,7 +13,11 @@ export const getUsers = async (req, res) => {
 
 export const getLoginLogs = async (req, res) => {
     try {
-        const logs = await LoginLog.find().populate('userId', 'email role').sort({ timestamp: -1 });
+        const logs = await LoginLog.find()
+            .populate('userId', 'email role')
+            .sort({ timestamp: -1 })
+            .limit(100)
+            .lean();
         res.json(logs);
     } catch (error) {
         res.status(500).json({ message: 'Error fetching login logs', error: error.message });
@@ -22,7 +26,11 @@ export const getLoginLogs = async (req, res) => {
 
 export const getAudioSessions = async (req, res) => {
     try {
-        const sessions = await AudioSession.find().select('-audioBase64').populate('userId', 'email').sort({ createdAt: -1 });
+        const sessions = await AudioSession.find()
+            .select('-audioBase64')
+            .populate('userId', 'email')
+            .sort({ createdAt: -1 })
+            .lean();
         res.json(sessions);
     } catch (error) {
         res.status(500).json({ message: 'Error fetching audio sessions', error: error.message });
