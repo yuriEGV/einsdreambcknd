@@ -23,7 +23,7 @@ const audioSessionSchema = new mongoose.Schema({
     },
     eventType: {
         type: String,
-        enum: ['noise', 'snore', 'cough', 'voice', 'unknown'],
+        enum: ['noise', 'snore', 'cough', 'voice', 'auto-agent', 'unknown'],
         default: 'unknown'
     },
     createdAt: {
