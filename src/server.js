@@ -17,11 +17,25 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-// Disable Mongoose buffering globally to prevent hangs in Serverless
-mongoose.set('bufferCommands', false);
-
 // Serve static files from the public directory (for APK download etc.)
 app.use('/public', express.static(path.join(__dirname, '../public')));
+
+// Middleware to ensure DB connection on every API request for Vercel
+app.use('/api', async (req, res, next) => {
+  try {
+    await connectDB();
+    if (mongoose.connection.readyState !== 1) {
+      throw new Error(`Database connection not ready. State: ${mongoose.connection.readyState}`);
+    }
+    next();
+  } catch (err) {
+    console.error('[DB GUARD ERROR]:', err.message);
+    res.status(503).json({
+      message: 'Database connection failed. Please check MongoDB Atlas IP access logs.',
+      error: err.message
+    });
+  }
+});
 
 // Routes
 app.use('/api', apiRoutes);
@@ -82,25 +96,6 @@ if (process.env.VERCEL !== '1') {
   });
 }
 
-// Middleware to ensure DB connection on every API request for Vercel compatibility
-app.use('/api', async (req, res, next) => {
-  try {
-    // Ensure connection is established before any model query
-    await connectDB();
-
-    if (mongoose.connection.readyState !== 1) {
-      throw new Error(`Database connection not ready. Current state: ${mongoose.connection.readyState}`);
-    }
-
-    next();
-  } catch (err) {
-    console.error('[API ERROR] DB Connection Guard failed:', err.message);
-    res.status(503).json({
-      message: 'Database connection failed. Please try again in 5 seconds.',
-      error: err.message
-    });
-  }
-});
 
 // Global Error Handler
 app.use((err, req, res, next) => {

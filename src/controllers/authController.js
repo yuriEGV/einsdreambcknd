@@ -44,12 +44,6 @@ export const login = async (req, res) => {
     try {
         const { email, password } = req.body;
 
-        // Ensure Mongoose is definitely connected before querying (prevents buffering error)
-        if (mongoose.connection.readyState !== 1) {
-            console.log('[LOGIN] Waiting for Mongoose connection...');
-            await mongoose.connection.asPromise();
-        }
-
         console.log('[LOGIN] Step 1: Finding user...');
         const user = await User.findOne({ email });
 
