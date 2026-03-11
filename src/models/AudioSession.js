@@ -30,6 +30,6 @@ const audioSessionSchema = new mongoose.Schema({
         type: Date,
         default: Date.now
     }
-}, { bufferCommands: false });
+});
 
 export default mongoose.models.AudioSession || mongoose.model('AudioSession', audioSessionSchema);

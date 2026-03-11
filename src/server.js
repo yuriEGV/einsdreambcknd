@@ -17,9 +17,6 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-// Disable Mongoose buffering globally for serverless environments
-mongoose.set('bufferCommands', false);
-
 // Serve static files from the public directory (for APK download etc.)
 app.use('/public', express.static(path.join(__dirname, '../public')));
 
@@ -37,33 +34,38 @@ app.get('/', async (req, res) => {
   });
 });
 
-let cachedConnection = null;
+let cachedPromise = null;
+let lastDbError = null;
 
 // Database connection
 const connectDB = async () => {
-  if (cachedConnection) return cachedConnection;
+  if (mongoose.connection.readyState >= 1) return;
 
-  if (!process.env.MONGODB_URI) {
-    const msg = 'CRITICAL ERROR: MONGODB_URI is not defined in environment variables.';
-    console.error(msg);
-    lastDbError = msg;
-    return;
+  if (!cachedPromise) {
+    if (!process.env.MONGODB_URI) {
+      const msg = 'CRITICAL ERROR: MONGODB_URI is not defined in environment variables.';
+      console.error(msg);
+      lastDbError = msg;
+      return;
+    }
+
+    console.log('Attempting to connect to MongoDB...');
+    cachedPromise = mongoose.connect(process.env.MONGODB_URI, {
+      serverSelectionTimeoutMS: 5000,
+      connectTimeoutMS: 10000,
+    }).catch(err => {
+      cachedPromise = null;
+      throw err;
+    });
   }
 
   try {
-    console.log('Attempting to connect to MongoDB (no buffering)...');
-    cachedConnection = await mongoose.connect(process.env.MONGODB_URI, {
-      serverSelectionTimeoutMS: 5000,
-      connectTimeoutMS: 5000,
-      socketTimeoutMS: 30000,
-    });
+    await cachedPromise;
     console.log('Connected to MongoDB successfully');
     lastDbError = null;
-    return cachedConnection;
   } catch (error) {
     console.error('MongoDB connection error:', error.message);
     lastDbError = error.message;
-    cachedConnection = null;
     throw error;
   }
 };
