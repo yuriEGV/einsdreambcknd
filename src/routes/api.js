@@ -60,6 +60,7 @@ router.post('/upload/init', authMiddleware, uploadController.initUpload);
 router.post('/upload/local', authMiddleware, uploadLocal.single('audio'), uploadController.handleLocalUpload);
 
 router.post('/upload/metadata', authMiddleware, uploadController.saveMetadata);
+router.get('/sessions/:id/audio', authMiddleware, uploadController.getAudioById);
 router.get('/sessions/me', authMiddleware, uploadController.getMySessions);
 
 // Admin endpoints

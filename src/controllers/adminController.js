@@ -22,7 +22,7 @@ export const getLoginLogs = async (req, res) => {
 
 export const getAudioSessions = async (req, res) => {
     try {
-        const sessions = await AudioSession.find().populate('userId', 'email').sort({ createdAt: -1 });
+        const sessions = await AudioSession.find().select('-audioBase64').populate('userId', 'email').sort({ createdAt: -1 });
         res.json(sessions);
     } catch (error) {
         res.status(500).json({ message: 'Error fetching audio sessions', error: error.message });

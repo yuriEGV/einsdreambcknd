@@ -115,3 +115,14 @@ export const getMySessions = async (req, res) => {
         res.status(500).json({ message: 'Error fetching sessions', error: error.message });
     }
 };
+
+export const getAudioById = async (req, res) => {
+    try {
+        const session = await AudioSession.findById(req.params.id).select('audioBase64');
+        if (!session) return res.status(404).json({ message: 'Session not found' });
+        res.json({ audioBase64: session.audioBase64 });
+    } catch (error) {
+        res.status(500).json({ message: 'Error fetching audio data', error: error.message });
+    }
+};
+
