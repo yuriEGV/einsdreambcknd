@@ -21,9 +21,6 @@ import { loginUser, logoutUser, getUserSession, uploadAudioFile } from './src/se
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-// Keep splash screen visible until ready
-SplashScreen.preventAutoHideAsync().catch(() => {});
-
 // Safe helper for local recordings directory
 const getRecordingsDir = () => {
   const base = FileSystem.documentDirectory || FileSystem.cacheDirectory || '';

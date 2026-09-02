@@ -41,38 +41,19 @@ jobs:
         run: |
           npm install
 
-      - name: Bundle New App.js v2.1.0 with Metro
+      - name: Bundle Official Expo Hermes Bytecode v2.1.0
         working-directory: mobile-app
         run: |
           mkdir -p ../public/assets
-          npx react-native bundle \
+          npx expo export:embed \
             --platform android \
             --dev false \
-            --entry-file index.js \
-            --bundle-output ../public/assets/index.android.bundle
+            --bundle-output ../public/assets/index.android.bundle \
+            --bytecode
 
-          echo "Generated JS bundle size:"
+          echo "Expo Hermes bytecode size and header:"
           ls -lh ../public/assets/index.android.bundle
-
-      - name: Compile to Hermes Bytecode
-        run: |
-          HERMESC=$(find mobile-app/node_modules -name "hermesc" -type f | head -1)
-          if [ -z "$HERMESC" ]; then
-            echo "hermesc not found, installing hermes-engine..."
-            cd mobile-app && npm install -D hermes-engine && cd ..
-            HERMESC=$(find mobile-app/node_modules -name "hermesc" -type f | head -1)
-          fi
-          
-          echo "Found hermesc at: $HERMESC"
-          chmod +x "$HERMESC"
-          "$HERMESC" -version || true
-
-          # Convert JS bundle to Hermes Bytecode
-          "$HERMESC" -emit-binary -out public/assets/index.android.bundle public/assets/index.android.bundle
-
-          echo "Compiled Hermes bytecode size and header:"
-          ls -lh public/assets/index.android.bundle
-          od -t x1 -N 16 public/assets/index.android.bundle
+          od -t x1 -N 16 ../public/assets/index.android.bundle
 
       - name: Inject Hermes Bytecode into APK & Re-sign with apksigner
         run: |
