@@ -1,6 +1,7 @@
 {
   "name": "einsdream-mobile",
   "version": "2.1.0",
+  "main": "index.js",
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",

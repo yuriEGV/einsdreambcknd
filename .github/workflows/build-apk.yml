@@ -41,19 +41,14 @@ jobs:
         run: |
           npm install
 
-      - name: Bundle New App.js v2.1.0
+      - name: Bundle New App.js v2.1.0 with Metro
         working-directory: mobile-app
         run: |
           mkdir -p ../public/assets
-          npx expo export:embed \
-            --platform android \
-            --entry-file App.js \
-            --bundle-output ../public/assets/index.android.bundle \
-            --dev false || \
           npx react-native bundle \
             --platform android \
             --dev false \
-            --entry-file App.js \
+            --entry-file index.js \
             --bundle-output ../public/assets/index.android.bundle
 
           echo "Generated bundle size:"
