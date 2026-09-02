@@ -2,17 +2,10 @@ import 'dotenv/config';
 import express from 'express';
 import mongoose from 'mongoose';
 import cors from 'cors';
-import path from 'path';
-import fs from 'fs';
-import { fileURLToPath } from 'url';
-
 import apiRoutes from './routes/api.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 // 1. Universal Preflight & CORS Middleware (MUST be first)
 app.use((req, res, next) => {
@@ -32,21 +25,12 @@ app.use(cors({
   allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization', 'X-Api-Version', 'X-CSRF-Token']
 }));
 
-app.use(express.json({ limit: '15mb' }));
-app.use(express.urlencoded({ limit: '15mb', extended: true }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-// Serve static files from the public directory (for APK download etc.)
-const publicDir = path.join(__dirname, '../public');
-app.use('/public', express.static(publicDir));
-
-// Direct convenient APK download endpoint
+// Direct APK download endpoint (redirects to CDN static route or returns URL)
 app.get('/download/apk', (req, res) => {
-  const apkPath = path.join(publicDir, 'einsdream-mobile.apk');
-  if (fs.existsSync(apkPath)) {
-    res.download(apkPath, 'einsdream-mobile.apk');
-  } else {
-    res.status(404).json({ message: 'APK file not found on server' });
-  }
+  res.redirect('/public/einsdream-mobile.apk');
 });
 
 let cachedPromise = null;
@@ -87,7 +71,6 @@ const connectDB = async () => {
 
 // Middleware to ensure DB connection on every API request for Vercel
 app.use('/api', async (req, res, next) => {
-  // Always allow OPTIONS through immediately without blocking on DB
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
@@ -98,7 +81,7 @@ app.use('/api', async (req, res, next) => {
   } catch (err) {
     console.error('[DB GUARD ERROR]:', err.message);
     res.status(503).json({
-      message: 'Database connection failed. Please check MongoDB Atlas connection URI and IP Whitelist (0.0.0.0/0).',
+      message: 'Database connection failed. Please check MongoDB Atlas connection URI.',
       error: err.message
     });
   }
@@ -116,8 +99,6 @@ app.get('/', async (req, res) => {
     version: '2.0.0',
     dbStatus: mongoose.connection.readyState === 1 ? 'connected' : 'connecting/disconnected',
     dbError: lastDbError,
-    apkAvailable: fs.existsSync(path.join(publicDir, 'einsdream-mobile.apk')),
-    apkDownloadUrl: '/download/apk',
     timestamp: new Date().toISOString()
   });
 });
