@@ -81,9 +81,12 @@ jobs:
 
           cd public
           
-          # 1. Update assets/index.android.bundle inside APK
-          zip -u einsdream-mobile.apk assets/index.android.bundle
+          # 1. Update assets/index.android.bundle inside APK UNCOMPRESSED (-0) for Hermes mmap
+          zip -0 -u einsdream-mobile.apk assets/index.android.bundle
           
+          # Verify bundle is stored uncompressed for Android NDK AAsset_getBuffer()
+          python3 -c "import zipfile; z=zipfile.ZipFile('einsdream-mobile.apk'); e=z.getinfo('assets/index.android.bundle'); print('Bundle compressed:', e.compress_size, 'raw:', e.file_size); assert e.compress_size == e.file_size, 'Bundle must be uncompressed for Hermes mmap!'"
+
           # 2. Update app.config version to 2.1.0 if exists
           unzip -p einsdream-mobile.apk assets/app.config > assets/app.config 2>/dev/null || true
           if [ -f assets/app.config ]; then
