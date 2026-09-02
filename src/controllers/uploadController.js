@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+﻿import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Storage } from '@google-cloud/storage';
 import fs from 'fs';
@@ -80,14 +80,13 @@ export const initUpload = async (req, res) => {
             const [presignedUrl] = await file.getSignedUrl({
                 version: 'v4',
                 action: 'write',
-                expires: Date.now() + 5 * 60 * 1000, // 5 minutes
+                expires: Date.now() + 5 * 60 * 1000,
                 contentType: contentType,
             });
 
             return res.json({ uploadMethod: 'PUT', url: presignedUrl, fileKey, provider: 'gcs' });
 
         } else {
-            // Local Storage
             return res.json({ uploadMethod: 'POST', url: '/api/upload/local', fileKey, provider: 'local' });
         }
 
@@ -109,7 +108,6 @@ export const handleLocalUpload = async (req, res) => {
         const filePath = req.file.path;
         const fileKey = req.file.filename;
 
-        // If running in serverless environment (Vercel) without persistent disk, generate base64 data for fallback
         let base64Data = null;
         if (isVercel) {
             try {
@@ -154,7 +152,7 @@ export const saveMetadata = async (req, res) => {
         } = req.body;
 
         const effectiveKey = storageKey || s3Key || `session_${Date.now()}`;
-        const cleanEventType = eventType || 'unknown';
+        const cleanEventType = eventType || 'auto-agent';
 
         const newSession = new AudioSession({
             userId: req.user.userId,
@@ -209,7 +207,7 @@ export const bulkUploadMetadata = async (req, res) => {
                     s3Key: effectiveKey,
                     duration: Number(ev.duration) || 15,
                     deviceModel: ev.deviceModel || 'Einsdream Offline Queue',
-                    eventType: ev.eventType || 'unknown',
+                    eventType: ev.eventType || 'auto-agent',
                     confidence: typeof ev.confidence === 'number' ? ev.confidence : 80,
                     intensityDb: typeof ev.intensityDb === 'number' ? ev.intensityDb : 55,
                     preRollSeconds: typeof ev.preRollSeconds === 'number' ? ev.preRollSeconds : 5,
@@ -255,7 +253,6 @@ export const getAudioById = async (req, res) => {
         const s3 = getS3Client();
         const gcs = getGcsClient();
 
-        // Generate S3 presigned GET url if provider is s3
         if (provider === 's3' && s3 && process.env.AWS_S3_BUCKET_NAME && session.storageKey) {
             try {
                 const command = new GetObjectCommand({
@@ -293,7 +290,10 @@ export const getAudioById = async (req, res) => {
             streamUrl: `/api/sessions/${session._id}/stream`,
             storageKey: session.storageKey,
             eventType: session.eventType,
-            duration: session.duration
+            duration: session.duration,
+            intensityDb: session.intensityDb,
+            confidence: session.confidence,
+            detectedAt: session.detectedAt
         });
     } catch (error) {
         console.error('Error fetching audio data:', error);
@@ -370,7 +370,12 @@ export const streamAudioSession = async (req, res) => {
 export const getMySessions = async (req, res) => {
     try {
         const { eventType, sessionGroup, date, limit = 100, page = 1 } = req.query;
-        const filter = { userId: req.user.userId };
+        const filter = {};
+
+        // If not admin, restrict to user; if admin, allow querying all or me
+        if (req.user.role !== 'admin') {
+            filter.userId = req.user.userId;
+        }
 
         if (eventType && eventType !== 'all') {
             filter.eventType = eventType;
@@ -385,7 +390,10 @@ export const getMySessions = async (req, res) => {
             start.setHours(0, 0, 0, 0);
             const end = new Date(date);
             end.setHours(23, 59, 59, 999);
-            filter.detectedAt = { $gte: start, $lte: end };
+            filter.$or = [
+                { detectedAt: { $gte: start, $lte: end } },
+                { createdAt: { $gte: start, $lte: end } }
+            ];
         }
 
         const skip = (Number(page) - 1) * Number(limit);
@@ -411,25 +419,33 @@ export const getMySessions = async (req, res) => {
 };
 
 /**
- * Get Night Session Timeline Events
+ * Get Night Session Timeline Events (Expansive 24h + sleep window)
  */
 export const getNightSession = async (req, res) => {
     try {
-        const userId = req.user.userId;
         const targetDateStr = req.params.date || req.query.date || new Date().toISOString().slice(0, 10);
 
+        // Include events from 00:00 of target date through 23:59:59 (covering daytime tests + full night)
         const startDate = new Date(targetDateStr);
-        startDate.setHours(20, 0, 0, 0);
+        startDate.setHours(0, 0, 0, 0);
 
         const endDate = new Date(targetDateStr);
         endDate.setDate(endDate.getDate() + 1);
         endDate.setHours(12, 0, 0, 0);
 
-        const events = await AudioSession.find({
-            userId,
-            detectedAt: { $gte: startDate, $lte: endDate }
-        })
-            .sort({ detectedAt: 1 })
+        const filter = {
+            $or: [
+                { detectedAt: { $gte: startDate, $lte: endDate } },
+                { createdAt: { $gte: startDate, $lte: endDate } }
+            ]
+        };
+
+        if (req.user.role !== 'admin') {
+            filter.userId = req.user.userId;
+        }
+
+        const events = await AudioSession.find(filter)
+            .sort({ detectedAt: 1, createdAt: 1 })
             .lean();
 
         const eventBreakdown = {
@@ -440,6 +456,7 @@ export const getNightSession = async (req, res) => {
             voice: 0,
             noise: 0,
             movement: 0,
+            'auto-agent': 0,
             unknown: 0
         };
 
@@ -450,8 +467,8 @@ export const getNightSession = async (req, res) => {
             totalDuration += (e.duration || 15);
         });
 
-        const firstEvent = events[0] ? events[0].detectedAt : null;
-        const lastEvent = events.length > 0 ? events[events.length - 1].detectedAt : null;
+        const firstEvent = events[0] ? (events[0].detectedAt || events[0].createdAt) : null;
+        const lastEvent = events.length > 0 ? (events[events.length - 1].detectedAt || events[events.length - 1].createdAt) : null;
 
         res.json({
             date: targetDateStr,
@@ -474,10 +491,13 @@ export const getNightSession = async (req, res) => {
  */
 export const getSessionStats = async (req, res) => {
     try {
-        const userId = req.user.userId;
+        const filter = {};
+        if (req.user.role !== 'admin') {
+            filter.userId = req.user.userId;
+        }
 
-        const allSessions = await AudioSession.find({ userId })
-            .sort({ detectedAt: -1 })
+        const allSessions = await AudioSession.find(filter)
+            .sort({ detectedAt: -1, createdAt: -1 })
             .lean();
 
         const totalEvents = allSessions.length;
@@ -576,13 +596,17 @@ export const addSessionComment = async (req, res) => {
  */
 export const getDiagnosticsStatus = async (req, res) => {
     try {
-        const userId = req.user.userId;
         const todayStart = new Date();
         todayStart.setHours(0, 0, 0, 0);
 
+        const filter = {};
+        if (req.user.role !== 'admin') {
+            filter.userId = req.user.userId;
+        }
+
         const [todayEventsCount, latestEvent] = await Promise.all([
-            AudioSession.countDocuments({ userId, detectedAt: { $gte: todayStart } }),
-            AudioSession.findOne({ userId }).sort({ detectedAt: -1 }).lean()
+            AudioSession.countDocuments({ ...filter, detectedAt: { $gte: todayStart } }),
+            AudioSession.findOne(filter).sort({ detectedAt: -1, createdAt: -1 }).lean()
         ]);
 
         res.json({
@@ -603,7 +627,7 @@ export const getDiagnosticsStatus = async (req, res) => {
                     id: latestEvent._id,
                     eventType: latestEvent.eventType,
                     confidence: latestEvent.confidence,
-                    detectedAt: latestEvent.detectedAt,
+                    detectedAt: latestEvent.detectedAt || latestEvent.createdAt,
                     duration: latestEvent.duration
                 } : null
             }
