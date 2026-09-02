@@ -14,9 +14,26 @@ const PORT = process.env.PORT || 5000;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-app.use(cors());
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ limit: '10mb', extended: true }));
+// 1. Universal Preflight & CORS Middleware (MUST be first)
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Api-Version, X-CSRF-Token');
+  
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  next();
+});
+
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization', 'X-Api-Version', 'X-CSRF-Token']
+}));
+
+app.use(express.json({ limit: '15mb' }));
+app.use(express.urlencoded({ limit: '15mb', extended: true }));
 
 // Serve static files from the public directory (for APK download etc.)
 const publicDir = path.join(__dirname, '../public');
@@ -30,39 +47,6 @@ app.get('/download/apk', (req, res) => {
   } else {
     res.status(404).json({ message: 'APK file not found on server' });
   }
-});
-
-// Middleware to ensure DB connection on every API request for Vercel
-app.use('/api', async (req, res, next) => {
-  try {
-    await connectDB();
-    if (mongoose.connection.readyState !== 1) {
-      throw new Error(`Database connection not ready. State: ${mongoose.connection.readyState}`);
-    }
-    next();
-  } catch (err) {
-    console.error('[DB GUARD ERROR]:', err.message);
-    res.status(503).json({
-      message: 'Database connection failed. Please check MongoDB Atlas IP access logs.',
-      error: err.message
-    });
-  }
-});
-
-// Routes
-app.use('/api', apiRoutes);
-
-app.get('/', async (req, res) => {
-  await connectDB();
-  res.json({
-    message: 'Einsdream Backend API is running (Einsdream 2.0)',
-    version: '2.0.0',
-    dbStatus: mongoose.connection.readyState === 1 ? 'connected' : 'connecting/disconnected',
-    dbError: lastDbError,
-    apkAvailable: fs.existsSync(path.join(publicDir, 'einsdream-mobile.apk')),
-    apkDownloadUrl: '/download/apk',
-    timestamp: new Date().toISOString()
-  });
 });
 
 let cachedPromise = null;
@@ -80,7 +64,7 @@ const connectDB = async () => {
       return;
     }
 
-    console.log('Attempting to connect to MongoDB...');
+    console.log('Attempting to connect to MongoDB Atlas...');
     cachedPromise = mongoose.connect(process.env.MONGODB_URI, {
       serverSelectionTimeoutMS: 5000,
       connectTimeoutMS: 10000,
@@ -100,6 +84,43 @@ const connectDB = async () => {
     throw error;
   }
 };
+
+// Middleware to ensure DB connection on every API request for Vercel
+app.use('/api', async (req, res, next) => {
+  // Always allow OPTIONS through immediately without blocking on DB
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  try {
+    await connectDB();
+    next();
+  } catch (err) {
+    console.error('[DB GUARD ERROR]:', err.message);
+    res.status(503).json({
+      message: 'Database connection failed. Please check MongoDB Atlas connection URI and IP Whitelist (0.0.0.0/0).',
+      error: err.message
+    });
+  }
+});
+
+// Routes
+app.use('/api', apiRoutes);
+
+app.get('/', async (req, res) => {
+  try {
+    await connectDB();
+  } catch {}
+  res.json({
+    message: 'Einsdream Backend API is running (Einsdream 2.0)',
+    version: '2.0.0',
+    dbStatus: mongoose.connection.readyState === 1 ? 'connected' : 'connecting/disconnected',
+    dbError: lastDbError,
+    apkAvailable: fs.existsSync(path.join(publicDir, 'einsdream-mobile.apk')),
+    apkDownloadUrl: '/download/apk',
+    timestamp: new Date().toISOString()
+  });
+});
 
 // For local development
 if (process.env.VERCEL !== '1') {
