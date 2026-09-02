@@ -103,8 +103,8 @@ jobs:
           # 5. Zipalign the APK
           "$BUILD_TOOLS/zipalign" -f -v 4 einsdream-mobile.apk einsdream-mobile-aligned.apk
           
-          # 6. Sign with apksigner (v1, v2, v3 schemes enabled by default)
-          "$BUILD_TOOLS/apksigner" sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android --out einsdream-mobile.apk einsdream-mobile-aligned.apk
+          # 6. Sign with apksigner (v1 JAR signing, v2 APK signature, v3 scheme all enabled)
+          "$BUILD_TOOLS/apksigner" sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true --out einsdream-mobile.apk einsdream-mobile-aligned.apk
           
           # 7. Verify signature
           "$BUILD_TOOLS/apksigner" verify -v --print-certs einsdream-mobile.apk
