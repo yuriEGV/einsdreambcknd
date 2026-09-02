@@ -58,10 +58,11 @@ jobs:
       - name: Fix Compatibility & Build APK
         working-directory: mobile-app/android
         run: |
-          # Remove incompatible ReactExtension property if added by template
-          sed -i '/enableBundleCompression/d' app/build.gradle || true
+          echo "" >> gradle.properties
+          echo "kotlinVersion=1.9.25" >> gradle.properties
+          echo "androidx.compose.compiler.suppressKotlinVersionCompatibilityCheck=true" >> gradle.properties
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon -x lint -x test --stacktrace
+          ./gradlew assembleDebug --no-daemon -x lint -x test -PkotlinVersion=1.9.25 -Pandroidx.compose.compiler.suppressKotlinVersionCompatibilityCheck=true --stacktrace
 
       - name: Locate and update public APK
         run: |
