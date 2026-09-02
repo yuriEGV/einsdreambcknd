@@ -55,14 +55,21 @@ jobs:
         run: |
           npx expo prebuild --platform android --no-install --clean
 
-      - name: Fix Compatibility & Build APK
+      - name: Set Kotlin 1.9.25 & Build APK
         working-directory: mobile-app/android
         run: |
-          echo "" >> gradle.properties
+          # Replace Kotlin 1.9.24 with 1.9.25 required by Jetpack Compose 1.5.15
+          find . -name "*.gradle" -exec sed -i 's/1\.9\.24/1.9.25/g' {} +
+          find . -name "gradle.properties" -exec sed -i 's/1\.9\.24/1.9.25/g' {} +
           echo "kotlinVersion=1.9.25" >> gradle.properties
+          echo "suppressKotlinVersionCompatibilityCheck=true" >> gradle.properties
           echo "androidx.compose.compiler.suppressKotlinVersionCompatibilityCheck=true" >> gradle.properties
+          
+          # Show Kotlin version configured
+          grep -rn "1.9.25" . || true
+          
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon -x lint -x test -PkotlinVersion=1.9.25 -Pandroidx.compose.compiler.suppressKotlinVersionCompatibilityCheck=true --stacktrace
+          ./gradlew assembleDebug --no-daemon -x lint -x test
 
       - name: Locate and update public APK
         run: |
