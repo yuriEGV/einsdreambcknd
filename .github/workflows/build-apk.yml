@@ -94,20 +94,24 @@ jobs:
             zip -u einsdream-mobile.apk assets/app.config
           fi
 
-          # 3. Remove old signature manifests
-          zip -d einsdream-mobile.apk "META-INF/*" || true
+          # 3. Assert critical Kotlin coroutines & AndroidX services are intact in META-INF
+          python3 -c "import zipfile; z=zipfile.ZipFile('einsdream-mobile.apk'); assert 'META-INF/services/kotlinx.coroutines.internal.MainDispatcherFactory' in z.namelist(), 'CRITICAL: MainDispatcherFactory missing!'"
+
+          # 4. Remove signature files ONLY (never delete META-INF/services!)
+          zip -d einsdream-mobile.apk "META-INF/*.SF" "META-INF/*.RSA" "META-INF/*.DSA" 2>/dev/null || true
           
-          # 4. Create Android debug keystore
+          # 5. Create Android debug keystore
           keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Einsdream,O=Einsdream,C=CL"
           
-          # 5. Zipalign the APK
+          # 6. Zipalign the APK
           "$BUILD_TOOLS/zipalign" -f -v 4 einsdream-mobile.apk einsdream-mobile-aligned.apk
           
-          # 6. Sign with apksigner (v1 JAR signing, v2 APK signature, v3 scheme all enabled)
-          "$BUILD_TOOLS/apksigner" sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true --out einsdream-mobile.apk einsdream-mobile-aligned.apk
+          # 7. Sign with apksigner (v2 & v3 schemes matching original APK)
+          "$BUILD_TOOLS/apksigner" sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android --out einsdream-mobile.apk einsdream-mobile-aligned.apk
           
-          # 7. Verify signature
+          # 8. Verify signature and confirm MainDispatcherFactory survives
           "$BUILD_TOOLS/apksigner" verify -v --print-certs einsdream-mobile.apk
+          python3 -c "import zipfile; z=zipfile.ZipFile('einsdream-mobile.apk'); assert 'META-INF/services/kotlinx.coroutines.internal.MainDispatcherFactory' in z.namelist(), 'CRITICAL: MainDispatcherFactory was lost!'"
           
           # Clean up temporary artifacts
           rm -rf debug.keystore einsdream-mobile-aligned.apk assets
