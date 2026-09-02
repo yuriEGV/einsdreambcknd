@@ -41,26 +41,27 @@ jobs:
         run: |
           npm install
 
-      - name: Bundle New App.js v2.1.0 with React Native / Metro
+      - name: Bundle New App.js v2.1.0
         working-directory: mobile-app
         run: |
           mkdir -p ../public/assets
+          npx expo export:embed \
+            --platform android \
+            --entry-file App.js \
+            --bundle-output ../public/assets/index.android.bundle \
+            --dev false || \
           npx react-native bundle \
             --platform android \
             --dev false \
             --entry-file App.js \
-            --bundle-output ../public/assets/index.android.bundle \
-            --assets-dest ../public/res
+            --bundle-output ../public/assets/index.android.bundle
 
           echo "Generated bundle size:"
           ls -lh ../public/assets/index.android.bundle
 
       - name: Inject Bundle into APK & Re-sign with apksigner
         run: |
-          BUILD_TOOLS="$ANDROID_HOME/build-tools/34.0.0"
-          if [ ! -d "$BUILD_TOOLS" ]; then
-            BUILD_TOOLS=$(find $ANDROID_HOME/build-tools -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
-          fi
+          BUILD_TOOLS=$(find $ANDROID_HOME/build-tools -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
           echo "Using Android build-tools: $BUILD_TOOLS"
 
           cd public
