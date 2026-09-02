@@ -27,10 +27,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Node.js 20 LTS
+      - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -38,13 +38,8 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Verify Pre-installed Android SDK & Accept Licenses
+      - name: Accept Android SDK Licenses
         run: |
-          echo "Android Home: $ANDROID_HOME"
-          ls -la $ANDROID_HOME/platforms/ || true
-          ls -la $ANDROID_HOME/build-tools/ || true
-          ls -la $ANDROID_HOME/ndk/ || true
-          # Accept all SDK licenses automatically
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses 2>/dev/null || true
 
       - name: Install dependencies
@@ -60,11 +55,15 @@ jobs:
         run: |
           npx expo prebuild --platform android --no-install --clean
 
-      - name: Build Android APK (Debug)
+      - name: Configure Kotlin 2.0 & Build APK
         working-directory: mobile-app/android
         run: |
+          # Set Kotlin version to 2.0.20 required by Expo SDK 54 KSP plugin
+          echo "" >> gradle.properties
+          echo "kotlinVersion=2.0.20" >> gradle.properties
+          echo "android.enableR8.fullMode=false" >> gradle.properties
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon -x lint -x test --stacktrace
+          ./gradlew assembleDebug --no-daemon -x lint -x test -PkotlinVersion=2.0.20 --stacktrace
 
       - name: Locate and update public APK
         run: |
