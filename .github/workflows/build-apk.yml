@@ -55,14 +55,21 @@ jobs:
         run: |
           npx expo prebuild --platform android --no-install --clean
 
-      - name: Fix Compose & Kotlin Compatibility & Build APK
+      - name: Fix Architecture & Build APK
         working-directory: mobile-app/android
         run: |
-          # 1. Replace 1.9.24 with 1.9.25 across android and node_modules
+          # 1. Disable New Architecture for CMake compatibility with expo-av
+          echo "" >> gradle.properties
+          echo "newArchEnabled=false" >> gradle.properties
+          echo "kotlinVersion=1.9.25" >> gradle.properties
+          echo "suppressKotlinVersionCompatibilityCheck=true" >> gradle.properties
+          echo "androidx.compose.compiler.suppressKotlinVersionCompatibilityCheck=true" >> gradle.properties
+
+          # 2. Replace 1.9.24 with 1.9.25 across android and node_modules
           find .. -name "*.gradle" -exec sed -i 's/1\.9\.24/1.9.25/g' {} +
           find .. -name "gradle.properties" -exec sed -i 's/1\.9\.24/1.9.25/g' {} +
           
-          # 2. Add Compose compiler suppression argument to root build.gradle
+          # 3. Add Compose compiler suppression argument
           cat << 'EOF' >> build.gradle
 
           allprojects {
@@ -77,7 +84,6 @@ jobs:
           }
           EOF
 
-          echo "kotlinVersion=1.9.25" >> gradle.properties
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon -x lint -x test
 
