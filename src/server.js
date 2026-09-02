@@ -41,53 +41,48 @@ app.get('/download/apk', (req, res) => {
   res.redirect('/public/einsdream-mobile.apk');
 });
 
-// Root Healthcheck (Always returns 200 immediately)
-app.get('/', (req, res) => {
+let lastDbError = null;
+
+// Robust Database Connection Handler for Vercel Serverless
+const connectDB = async () => {
+  if (mongoose.connection.readyState >= 1) {
+    return true;
+  }
+
+  if (!process.env.MONGODB_URI) {
+    lastDbError = 'MONGODB_URI is not defined in environment variables.';
+    console.error(lastDbError);
+    return false;
+  }
+
+  try {
+    await mongoose.connect(process.env.MONGODB_URI, {
+      serverSelectionTimeoutMS: 15000,
+      connectTimeoutMS: 15000,
+      bufferCommands: true
+    });
+    console.log('[DB]: Connected to MongoDB Atlas successfully');
+    lastDbError = null;
+    return true;
+  } catch (err) {
+    console.error('[DB ERROR]:', err.message);
+    lastDbError = err.message;
+    return false;
+  }
+};
+
+// Root Healthcheck
+app.get('/', async (req, res) => {
+  await connectDB();
   res.json({
     status: 'ONLINE',
     message: 'Einsdream Backend API is running',
     version: '2.0.0',
-    dbStatus: mongoose.connection.readyState === 1 ? 'connected' : mongoose.connection.readyState === 2 ? 'connecting' : 'disconnected',
+    dbStatus: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
     dbError: lastDbError,
     timestamp: new Date().toISOString()
   });
 });
-
-let cachedPromise = null;
-let lastDbError = null;
-
-// Safe Database Connection Helper
-const connectDB = async () => {
-  if (mongoose.connection.readyState === 1) return true;
-
-  if (!process.env.MONGODB_URI) {
-    lastDbError = 'MONGODB_URI is not defined in environment variables.';
-    return false;
-  }
-
-  if (!cachedPromise) {
-    cachedPromise = mongoose.connect(process.env.MONGODB_URI, {
-      serverSelectionTimeoutMS: 3000,
-      connectTimeoutMS: 4000,
-    }).then(m => {
-      lastDbError = null;
-      return m;
-    }).catch(err => {
-      lastDbError = err.message;
-      cachedPromise = null;
-      return null;
-    });
-  }
-
-  try {
-    const conn = await cachedPromise;
-    return !!conn && mongoose.connection.readyState === 1;
-  } catch (e) {
-    cachedPromise = null;
-    lastDbError = e.message;
-    return false;
-  }
-};
 
 // Middleware to ensure DB connection on /api requests
 app.use('/api', async (req, res, next) => {
@@ -98,7 +93,7 @@ app.use('/api', async (req, res, next) => {
   const isConnected = await connectDB();
   if (!isConnected && mongoose.connection.readyState !== 1) {
     return res.status(503).json({
-      message: 'Base de datos no disponible temporalmente. Verifica el IP Whitelist (0.0.0.0/0) en MongoDB Atlas.',
+      message: 'Base de datos no disponible temporalmente. Conexión a MongoDB Atlas en progreso.',
       error: lastDbError
     });
   }
@@ -119,6 +114,7 @@ if (process.env.VERCEL !== '1') {
 
 // Global Error Handler
 app.use((err, req, res, next) => {
+  console.error('=== SERVER ERROR ===', err.message);
   res.status(500).json({
     message: 'Internal Server Error',
     error: err.message
