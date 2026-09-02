@@ -10,16 +10,15 @@ const audioSessionSchema = new mongoose.Schema({
     // storageKey is the canonical identifier; s3Key kept for backward compatibility with existing data & mobile APK
     storageKey: {
         type: String,
-        alias: 's3Key',
         required: true,
         index: true
     },
     s3Key: {
-        type: String
+        type: String,
+        index: true
     },
     audioBase64: {
         type: String,
-        // Kept optional for backward compatibility; excluded by default in heavy queries
         select: false
     },
     audioUrl: {
