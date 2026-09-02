@@ -41,29 +41,38 @@ app.get('/download/apk', (req, res) => {
   res.redirect('/public/einsdream-mobile.apk');
 });
 
+// Root Healthcheck (Always returns 200 immediately)
+app.get('/', (req, res) => {
+  res.json({
+    status: 'ONLINE',
+    message: 'Einsdream Backend API is running',
+    version: '2.0.0',
+    dbStatus: mongoose.connection.readyState === 1 ? 'connected' : mongoose.connection.readyState === 2 ? 'connecting' : 'disconnected',
+    dbError: lastDbError,
+    timestamp: new Date().toISOString()
+  });
+});
+
 let cachedPromise = null;
 let lastDbError = null;
 
-// Safe Database Connection Helper (Never throws unhandled exceptions)
+// Safe Database Connection Helper
 const connectDB = async () => {
   if (mongoose.connection.readyState === 1) return true;
 
   if (!process.env.MONGODB_URI) {
     lastDbError = 'MONGODB_URI is not defined in environment variables.';
-    console.warn('[DB]:', lastDbError);
     return false;
   }
 
   if (!cachedPromise) {
     cachedPromise = mongoose.connect(process.env.MONGODB_URI, {
-      serverSelectionTimeoutMS: 4000,
-      connectTimeoutMS: 5000,
+      serverSelectionTimeoutMS: 3000,
+      connectTimeoutMS: 4000,
     }).then(m => {
-      console.log('[DB]: Connected to MongoDB successfully');
       lastDbError = null;
       return m;
     }).catch(err => {
-      console.error('[DB ERROR]:', err.message);
       lastDbError = err.message;
       cachedPromise = null;
       return null;
@@ -80,7 +89,7 @@ const connectDB = async () => {
   }
 };
 
-// Middleware to ensure DB connection on every API request
+// Middleware to ensure DB connection on /api requests
 app.use('/api', async (req, res, next) => {
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
@@ -89,7 +98,7 @@ app.use('/api', async (req, res, next) => {
   const isConnected = await connectDB();
   if (!isConnected && mongoose.connection.readyState !== 1) {
     return res.status(503).json({
-      message: 'Database connection not ready. Check MongoDB Atlas IP whitelist (0.0.0.0/0).',
+      message: 'Base de datos no disponible temporalmente. Verifica el IP Whitelist (0.0.0.0/0) en MongoDB Atlas.',
       error: lastDbError
     });
   }
@@ -98,17 +107,6 @@ app.use('/api', async (req, res, next) => {
 
 // Routes
 app.use('/api', apiRoutes);
-
-app.get('/', async (req, res) => {
-  await connectDB();
-  res.json({
-    message: 'Einsdream Backend API is running',
-    version: '2.0.0',
-    dbStatus: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
-    dbError: lastDbError,
-    timestamp: new Date().toISOString()
-  });
-});
 
 // For local development
 if (process.env.VERCEL !== '1') {
@@ -121,7 +119,6 @@ if (process.env.VERCEL !== '1') {
 
 // Global Error Handler
 app.use((err, req, res, next) => {
-  console.error('=== SERVER ERROR ===', err.message);
   res.status(500).json({
     message: 'Internal Server Error',
     error: err.message
