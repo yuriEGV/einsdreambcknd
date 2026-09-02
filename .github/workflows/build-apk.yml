@@ -18,8 +18,6 @@ jobs:
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
-      _JAVA_OPTIONS: "-Xmx6g -XX:+UseG1GC"
-      GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx6g -Dorg.gradle.daemon=false"
 
     steps:
       - name: Checkout repository
@@ -38,71 +36,58 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Accept Android SDK Licenses
-        run: |
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses 2>/dev/null || true
-
       - name: Install dependencies
         working-directory: mobile-app
         run: |
           npm install
 
-      - name: Prebuild Android native project
+      - name: Bundle New App.js v2.1.0 with React Native / Metro
         working-directory: mobile-app
-        env:
-          EXPO_NO_TELEMETRY: 1
-          CI: 1
         run: |
-          npx expo prebuild --platform android --no-install --clean
+          mkdir -p ../public/assets
+          npx react-native bundle \
+            --platform android \
+            --dev false \
+            --entry-file App.js \
+            --bundle-output ../public/assets/index.android.bundle \
+            --assets-dest ../public/res
 
-      - name: Fix Architecture & Build APK
-        working-directory: mobile-app/android
+          echo "Generated bundle size:"
+          ls -lh ../public/assets/index.android.bundle
+
+      - name: Inject Bundle into APK & Re-sign with apksigner
         run: |
-          # 1. Disable New Architecture for CMake compatibility with expo-av
-          echo "" >> gradle.properties
-          echo "newArchEnabled=false" >> gradle.properties
-          echo "kotlinVersion=1.9.25" >> gradle.properties
-          echo "suppressKotlinVersionCompatibilityCheck=true" >> gradle.properties
-          echo "androidx.compose.compiler.suppressKotlinVersionCompatibilityCheck=true" >> gradle.properties
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/34.0.0"
+          if [ ! -d "$BUILD_TOOLS" ]; then
+            BUILD_TOOLS=$(find $ANDROID_HOME/build-tools -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          fi
+          echo "Using Android build-tools: $BUILD_TOOLS"
 
-          # 2. Replace 1.9.24 with 1.9.25 across android and node_modules
-          find .. -name "*.gradle" -exec sed -i 's/1\.9\.24/1.9.25/g' {} +
-          find .. -name "gradle.properties" -exec sed -i 's/1\.9\.24/1.9.25/g' {} +
+          cd public
           
-          # 3. Add Compose compiler suppression argument
-          cat << 'EOF' >> build.gradle
-
-          allprojects {
-              tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
-                  kotlinOptions {
-                      freeCompilerArgs += [
-                          "-P",
-                          "plugin:androidx.compose.compiler.plugins.kotlin:suppressKotlinVersionCompatibilityCheck=true"
-                      ]
-                  }
-              }
-          }
-          EOF
-
-          chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon -x lint -x test
-
-      - name: Locate and update public APK
-        run: |
-          echo "Locating built APK..."
-          APK=$(find mobile-app/android/app/build/outputs/apk -name "*.apk" -type f | head -1)
-          if [ -z "$APK" ]; then
-            APK=$(find . -name "*.apk" -type f | grep -v "public/einsdream-mobile.apk" | head -1)
-          fi
-          if [ -z "$APK" ]; then
-            echo "ERROR: No generated APK found!"
-            exit 1
-          fi
-          echo "Found generated APK: $APK"
-          mkdir -p public
-          cp -f "$APK" public/einsdream-mobile.apk
-          echo "Updated public/einsdream-mobile.apk size and info:"
-          ls -lh public/einsdream-mobile.apk
+          # 1. Update assets/index.android.bundle inside APK
+          zip -u einsdream-mobile.apk assets/index.android.bundle
+          
+          # 2. Remove old signature manifests
+          zip -d einsdream-mobile.apk "META-INF/*" || true
+          
+          # 3. Create Android debug keystore
+          keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Einsdream,O=Einsdream,C=CL"
+          
+          # 4. Zipalign the APK
+          "$BUILD_TOOLS/zipalign" -f -v 4 einsdream-mobile.apk einsdream-mobile-aligned.apk
+          
+          # 5. Sign with apksigner (v1, v2, v3 schemes enabled by default)
+          "$BUILD_TOOLS/apksigner" sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android --out einsdream-mobile.apk einsdream-mobile-aligned.apk
+          
+          # 6. Verify signature
+          "$BUILD_TOOLS/apksigner" verify -v einsdream-mobile.apk
+          
+          # Clean up temporary artifacts
+          rm -rf debug.keystore einsdream-mobile-aligned.apk assets
+          
+          echo "Final APK details:"
+          ls -lh einsdream-mobile.apk
 
       - name: Commit & Push new APK to repository
         run: |
