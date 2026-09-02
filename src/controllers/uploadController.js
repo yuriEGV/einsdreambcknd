@@ -16,20 +16,38 @@ const uploadDir = isVercel
 
 const provider = process.env.STORAGE_PROVIDER || 'local';
 
-// AWS S3 Client Setup
-const s3Client = (provider === 's3' && process.env.AWS_REGION) ? new S3Client({
-    region: process.env.AWS_REGION,
-    credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+// Safe lazy S3 client getter
+const getS3Client = () => {
+    try {
+        if (provider === 's3' && process.env.AWS_REGION && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+            return new S3Client({
+                region: process.env.AWS_REGION,
+                credentials: {
+                    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+                    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+                }
+            });
+        }
+    } catch (e) {
+        console.warn('S3 Client initialization skipped:', e.message);
     }
-}) : null;
+    return null;
+};
 
-// Google Cloud Storage Setup
-const gcsClient = (provider === 'gcs' && process.env.GCS_PROJECT_ID) ? new Storage({
-    projectId: process.env.GCS_PROJECT_ID,
-    keyFilename: process.env.GCS_KEYFILE_PATH,
-}) : null;
+// Safe lazy GCS client getter
+const getGcsClient = () => {
+    try {
+        if (provider === 'gcs' && process.env.GCS_PROJECT_ID) {
+            return new Storage({
+                projectId: process.env.GCS_PROJECT_ID,
+                keyFilename: process.env.GCS_KEYFILE_PATH,
+            });
+        }
+    } catch (e) {
+        console.warn('GCS Client initialization skipped:', e.message);
+    }
+    return null;
+};
 
 /**
  * Initialize an upload request (Generates presigned URL for S3/GCS or local endpoint)
@@ -42,18 +60,21 @@ export const initUpload = async (req, res) => {
         const cleanFilename = filename ? filename.replace(/[^a-zA-Z0-9._-]/g, '_') : 'audio.m4a';
         const fileKey = `audio/${userId}/${Date.now()}_${cleanFilename}`;
 
-        if (provider === 's3' && s3Client && process.env.AWS_S3_BUCKET_NAME) {
+        const s3 = getS3Client();
+        const gcs = getGcsClient();
+
+        if (provider === 's3' && s3 && process.env.AWS_S3_BUCKET_NAME) {
             const command = new PutObjectCommand({
                 Bucket: process.env.AWS_S3_BUCKET_NAME,
                 Key: fileKey,
                 ContentType: contentType,
             });
 
-            const presignedUrl = await getSignedUrl(s3Client, command, { expiresIn: 300 });
+            const presignedUrl = await getSignedUrl(s3, command, { expiresIn: 300 });
             return res.json({ uploadMethod: 'PUT', url: presignedUrl, fileKey, provider: 's3' });
 
-        } else if (provider === 'gcs' && gcsClient && process.env.GCS_BUCKET_NAME) {
-            const bucket = gcsClient.bucket(process.env.GCS_BUCKET_NAME);
+        } else if (provider === 'gcs' && gcs && process.env.GCS_BUCKET_NAME) {
+            const bucket = gcs.bucket(process.env.GCS_BUCKET_NAME);
             const file = bucket.file(fileKey);
 
             const [presignedUrl] = await file.getSignedUrl({
@@ -231,21 +252,24 @@ export const getAudioById = async (req, res) => {
         let audioUrl = session.audioUrl || null;
         let presignedUrl = null;
 
+        const s3 = getS3Client();
+        const gcs = getGcsClient();
+
         // Generate S3 presigned GET url if provider is s3
-        if (provider === 's3' && s3Client && process.env.AWS_S3_BUCKET_NAME && session.storageKey) {
+        if (provider === 's3' && s3 && process.env.AWS_S3_BUCKET_NAME && session.storageKey) {
             try {
                 const command = new GetObjectCommand({
                     Bucket: process.env.AWS_S3_BUCKET_NAME,
                     Key: session.storageKey,
                 });
-                presignedUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+                presignedUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
                 audioUrl = presignedUrl;
             } catch (s3Err) {
                 console.warn('Could not generate S3 presigned URL:', s3Err.message);
             }
-        } else if (provider === 'gcs' && gcsClient && process.env.GCS_BUCKET_NAME && session.storageKey) {
+        } else if (provider === 'gcs' && gcs && process.env.GCS_BUCKET_NAME && session.storageKey) {
             try {
-                const bucket = gcsClient.bucket(process.env.GCS_BUCKET_NAME);
+                const bucket = gcs.bucket(process.env.GCS_BUCKET_NAME);
                 const file = bucket.file(session.storageKey);
                 const [url] = await file.getSignedUrl({
                     version: 'v4',
@@ -259,12 +283,10 @@ export const getAudioById = async (req, res) => {
             }
         }
 
-        // If local file exists, provide streaming route
         if (!audioUrl && session.storageKey) {
             audioUrl = `/api/sessions/${session._id}/stream`;
         }
 
-        // Respond with all formats for maximum compatibility with both new Web and Legacy APK
         res.json({
             audioUrl: audioUrl || presignedUrl,
             audioBase64: session.audioBase64 || null,
@@ -280,7 +302,7 @@ export const getAudioById = async (req, res) => {
 };
 
 /**
- * Stream local audio file by Session ID or FileKey
+ * Stream local audio file by Session ID
  */
 export const streamAudioSession = async (req, res) => {
     try {
@@ -290,7 +312,6 @@ export const streamAudioSession = async (req, res) => {
             return res.status(404).json({ message: 'Session not found' });
         }
 
-        // 1. Check if file is stored in local uploads directory
         const filename = session.storageKey || session.s3Key;
         const potentialPath = path.isAbsolute(filename) ? filename : path.join(uploadDir, path.basename(filename));
 
@@ -325,7 +346,6 @@ export const streamAudioSession = async (req, res) => {
             return;
         }
 
-        // 2. Fallback: if audioBase64 exists, decode and stream it as binary
         if (session.audioBase64) {
             const cleanBase64 = session.audioBase64.replace(/^data:audio\/[a-zA-Z0-9]+;base64,/, '');
             const buffer = Buffer.from(cleanBase64, 'base64');
@@ -392,7 +412,6 @@ export const getMySessions = async (req, res) => {
 
 /**
  * Get Night Session Timeline Events
- * Groups events from 20:00 of date to 12:00 of date + 1
  */
 export const getNightSession = async (req, res) => {
     try {
@@ -400,11 +419,11 @@ export const getNightSession = async (req, res) => {
         const targetDateStr = req.params.date || req.query.date || new Date().toISOString().slice(0, 10);
 
         const startDate = new Date(targetDateStr);
-        startDate.setHours(20, 0, 0, 0); // 8:00 PM previous evening
+        startDate.setHours(20, 0, 0, 0);
 
         const endDate = new Date(targetDateStr);
         endDate.setDate(endDate.getDate() + 1);
-        endDate.setHours(12, 0, 0, 0); // 12:00 PM next day
+        endDate.setHours(12, 0, 0, 0);
 
         const events = await AudioSession.find({
             userId,
@@ -413,7 +432,6 @@ export const getNightSession = async (req, res) => {
             .sort({ detectedAt: 1 })
             .lean();
 
-        // Calculate breakdown
         const eventBreakdown = {
             snore: 0,
             cough: 0,
@@ -432,7 +450,6 @@ export const getNightSession = async (req, res) => {
             totalDuration += (e.duration || 15);
         });
 
-        // Determine session start and end times
         const firstEvent = events[0] ? events[0].detectedAt : null;
         const lastEvent = events.length > 0 ? events[events.length - 1].detectedAt : null;
 
@@ -487,13 +504,11 @@ export const getSessionStats = async (req, res) => {
             dailyDistribution[dayKey].duration += (s.duration || 15);
         });
 
-        // Recent 7 days trend
         const recentDays = Object.values(dailyDistribution)
             .sort((a, b) => b.date.localeCompare(a.date))
             .slice(0, 7)
             .reverse();
 
-        // Last night summary
         const today = new Date();
         const yesterday = new Date(today);
         yesterday.setDate(yesterday.getDate() - 1);
