@@ -16,7 +16,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Setup multer for local storage strategy
-// Setup multer for local storage strategy
 const isVercel = !!(process.env.VERCEL || process.env.VERCEL_ENV || process.env.NOW_REGION);
 const uploadDir = isVercel
     ? path.join('/tmp', 'uploads')
@@ -38,36 +37,58 @@ if (!fs.existsSync(uploadDir)) {
 
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
-        cb(null, uploadDir)
+        cb(null, uploadDir);
     },
     filename: function (req, file, cb) {
-        const userId = req.user.userId;
-        cb(null, `${userId}_${Date.now()}_${file.originalname}`)
+        const userId = req.user ? req.user.userId : 'anonymous';
+        const cleanName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+        cb(null, `${userId}_${Date.now()}_${cleanName}`);
     }
 });
 const uploadLocal = multer({ storage: storage });
 
-// Auth endpoints
+// ==================== AUTH ENDPOINTS ====================
 router.post('/auth/register', authController.register);
 router.post('/auth/login', authController.login);
 router.post('/auth/google', authController.googleLogin);
 router.post('/auth/consent', authMiddleware, authController.updateConsent);
 
-// Upload & Metadata endpoints
+// ==================== UPLOAD & SESSIONS ENDPOINTS (Einsdream 2.0 & Legacy APK) ====================
+// Upload initialization (Presigned URLs or local target)
 router.post('/upload/init', authMiddleware, uploadController.initUpload);
 
-// This endpoint is only called by the mobile client if provider === 'local'
+// Local audio file upload endpoint
 router.post('/upload/local', authMiddleware, uploadLocal.single('audio'), uploadController.handleLocalUpload);
 
+// Save recording metadata (from Web and Mobile APK)
 router.post('/upload/metadata', authMiddleware, uploadController.saveMetadata);
-router.get('/sessions/:id/audio', authMiddleware, uploadController.getAudioById);
-router.get('/sessions/me', authMiddleware, uploadController.getMySessions);
 
-// Admin endpoints
+// Bulk sync endpoint for offline queued recordings
+router.post('/sessions/bulk', authMiddleware, uploadController.bulkUploadMetadata);
+
+// Query sessions & stats for current user
+router.get('/sessions/me', authMiddleware, uploadController.getMySessions);
+router.get('/sessions/stats', authMiddleware, uploadController.getSessionStats);
+router.get('/sessions/night', authMiddleware, uploadController.getNightSession);
+router.get('/sessions/night/:date', authMiddleware, uploadController.getNightSession);
+
+// Audio playback & streaming
+router.get('/sessions/:id/audio', authMiddleware, uploadController.getAudioById);
+router.get('/sessions/:id/stream', authMiddleware, uploadController.streamAudioSession);
+
+// Event comments & annotations
+router.post('/sessions/:id/comments', authMiddleware, uploadController.addSessionComment);
+
+// Diagnostics & System Health
+router.get('/diagnostics/status', authMiddleware, uploadController.getDiagnosticsStatus);
+
+// ==================== ADMIN ENDPOINTS ====================
+router.get('/admin/stats', authMiddleware, adminMiddleware, adminController.getAdminStats);
 router.get('/admin/users', authMiddleware, adminMiddleware, adminController.getUsers);
 router.post('/admin/users', authMiddleware, adminMiddleware, adminController.createUser);
 router.put('/admin/users/:id', authMiddleware, adminMiddleware, adminController.updateUser);
 router.get('/admin/logs', authMiddleware, adminMiddleware, adminController.getLoginLogs);
 router.get('/admin/sessions', authMiddleware, adminMiddleware, adminController.getAudioSessions);
+router.delete('/admin/sessions/:id', authMiddleware, adminMiddleware, adminController.deleteAudioSession);
 
 export default router;

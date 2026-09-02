@@ -3,6 +3,7 @@ import express from 'express';
 import mongoose from 'mongoose';
 import cors from 'cors';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 import apiRoutes from './routes/api.js';
@@ -18,7 +19,18 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 // Serve static files from the public directory (for APK download etc.)
-app.use('/public', express.static(path.join(__dirname, '../public')));
+const publicDir = path.join(__dirname, '../public');
+app.use('/public', express.static(publicDir));
+
+// Direct convenient APK download endpoint
+app.get('/download/apk', (req, res) => {
+  const apkPath = path.join(publicDir, 'einsdream-mobile.apk');
+  if (fs.existsSync(apkPath)) {
+    res.download(apkPath, 'einsdream-mobile.apk');
+  } else {
+    res.status(404).json({ message: 'APK file not found on server' });
+  }
+});
 
 // Middleware to ensure DB connection on every API request for Vercel
 app.use('/api', async (req, res, next) => {
@@ -43,10 +55,12 @@ app.use('/api', apiRoutes);
 app.get('/', async (req, res) => {
   await connectDB();
   res.json({
-    message: 'Einsdream Backend API is running',
-    version: '1.1.0',
+    message: 'Einsdream Backend API is running (Einsdream 2.0)',
+    version: '2.0.0',
     dbStatus: mongoose.connection.readyState === 1 ? 'connected' : 'connecting/disconnected',
     dbError: lastDbError,
+    apkAvailable: fs.existsSync(path.join(publicDir, 'einsdream-mobile.apk')),
+    apkDownloadUrl: '/download/apk',
     timestamp: new Date().toISOString()
   });
 });
@@ -96,7 +110,6 @@ if (process.env.VERCEL !== '1') {
   });
 }
 
-
 // Global Error Handler
 app.use((err, req, res, next) => {
   console.error('=== SERVER ERROR EXPLOSION ===');
@@ -104,7 +117,7 @@ app.use((err, req, res, next) => {
   res.status(500).json({
     message: 'Internal Server Error',
     error: err.message,
-    stack: err.stack
+    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
   });
 });
 

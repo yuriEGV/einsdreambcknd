@@ -26,14 +26,60 @@ export const getLoginLogs = async (req, res) => {
 
 export const getAudioSessions = async (req, res) => {
     try {
-        const sessions = await AudioSession.find()
+        const { eventType, userId, limit = 200 } = req.query;
+        const filter = {};
+        if (eventType && eventType !== 'all') filter.eventType = eventType;
+        if (userId) filter.userId = userId;
+
+        const sessions = await AudioSession.find(filter)
             .select('-audioBase64')
-            .populate('userId', 'email')
-            .sort({ createdAt: -1 })
+            .populate('userId', 'email phone')
+            .sort({ detectedAt: -1, createdAt: -1 })
+            .limit(Number(limit))
             .lean();
         res.json(sessions);
     } catch (error) {
         res.status(500).json({ message: 'Error fetching audio sessions', error: error.message });
+    }
+};
+
+export const getAdminStats = async (req, res) => {
+    try {
+        const [totalUsers, totalSessions, totalLogs, typeAggregation] = await Promise.all([
+            User.countDocuments(),
+            AudioSession.countDocuments(),
+            LoginLog.countDocuments(),
+            AudioSession.aggregate([
+                { $group: { _id: '$eventType', count: { $sum: 1 }, totalDuration: { $sum: '$duration' } } }
+            ])
+        ]);
+
+        const eventBreakdown = {};
+        typeAggregation.forEach(item => {
+            eventBreakdown[item._id || 'unknown'] = item.count;
+        });
+
+        res.json({
+            usersCount: totalUsers,
+            sessionsCount: totalSessions,
+            logsCount: totalLogs,
+            eventBreakdown
+        });
+    } catch (error) {
+        res.status(500).json({ message: 'Error calculating admin stats', error: error.message });
+    }
+};
+
+export const deleteAudioSession = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const deleted = await AudioSession.findByIdAndDelete(id);
+        if (!deleted) {
+            return res.status(404).json({ message: 'Session not found' });
+        }
+        res.json({ message: 'Session deleted successfully' });
+    } catch (error) {
+        res.status(500).json({ message: 'Error deleting session', error: error.message });
     }
 };
 
@@ -48,7 +94,7 @@ export const createUser = async (req, res) => {
 
         const user = new User({
             email,
-            password, // MVP: plain text, use bcrypt in production
+            password,
             phone,
             role: role || 'user',
             services: services || [],
