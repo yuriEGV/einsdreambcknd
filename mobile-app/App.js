@@ -147,17 +147,17 @@ function Player({ rec, onClose }) {
       {/* Controls */}
       <View style={st.controls}>
         <TouchableOpacity style={st.skipBtn} onPress={()=>seek(pos-15000)}>
-          <Text style={st.skipIcon}><<</Text>
+          <Text style={st.skipIcon}>{"«"}</Text>
           <Text style={st.skipLbl}>15s</Text>
         </TouchableOpacity>
         <TouchableOpacity style={st.skipBtn} onPress={()=>seek(0)}>
-          <Text style={st.skipIcon}>|<</Text>
+          <Text style={st.skipIcon}>{"⏮"}</Text>
         </TouchableOpacity>
         <TouchableOpacity style={[st.playBtn,{backgroundColor:color}]} onPress={toggle}>
-          <Text style={st.playBtnTxt}>{playing?'||':'>'}</Text>
+          <Text style={st.playBtnTxt}>{playing ? '⏸' : '▶'}</Text>
         </TouchableOpacity>
         <TouchableOpacity style={st.skipBtn} onPress={()=>seek(pos+15000)}>
-          <Text style={st.skipIcon}>>></Text>
+          <Text style={st.skipIcon}>{"»"}</Text>
           <Text style={st.skipLbl}>15s</Text>
         </TouchableOpacity>
       </View>
