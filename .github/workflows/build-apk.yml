@@ -15,6 +15,12 @@ jobs:
     permissions:
       contents: write
 
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+      _JAVA_OPTIONS: "-Xmx6g -XX:+UseG1GC"
+      GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx6g -Dorg.gradle.daemon=false"
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -32,8 +38,14 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Verify Pre-installed Android SDK & Accept Licenses
+        run: |
+          echo "Android Home: $ANDROID_HOME"
+          ls -la $ANDROID_HOME/platforms/ || true
+          ls -la $ANDROID_HOME/build-tools/ || true
+          ls -la $ANDROID_HOME/ndk/ || true
+          # Accept all SDK licenses automatically
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses 2>/dev/null || true
 
       - name: Install dependencies
         working-directory: mobile-app
@@ -52,13 +64,13 @@ jobs:
         working-directory: mobile-app/android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon -x lint -x test
+          ./gradlew assembleDebug --no-daemon -x lint -x test --stacktrace
 
       - name: Locate and update public APK
         run: |
+          echo "Locating built APK..."
           APK=$(find mobile-app/android/app/build/outputs/apk -name "*.apk" -type f | head -1)
           if [ -z "$APK" ]; then
-            echo "Searching whole repo for apk..."
             APK=$(find . -name "*.apk" -type f | grep -v "public/einsdream-mobile.apk" | head -1)
           fi
           if [ -z "$APK" ]; then
@@ -67,8 +79,8 @@ jobs:
           fi
           echo "Found generated APK: $APK"
           mkdir -p public
-          cp "$APK" public/einsdream-mobile.apk
-          echo "Updated public/einsdream-mobile.apk:"
+          cp -f "$APK" public/einsdream-mobile.apk
+          echo "Updated public/einsdream-mobile.apk size and info:"
           ls -lh public/einsdream-mobile.apk
 
       - name: Commit & Push new APK to repository
@@ -76,12 +88,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add public/einsdream-mobile.apk
-          if git diff --staged --quiet; then
-            echo "No changes to commit in public/einsdream-mobile.apk"
-          else
-            git commit -m "chore(apk): update public/einsdream-mobile.apk to v2.1.0 with local recordings player [skip ci]"
-            git push origin main
-          fi
+          git commit -m "chore(apk): update public/einsdream-mobile.apk to v2.1.0 with local player [skip ci]"
+          git push origin main
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
