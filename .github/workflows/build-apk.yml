@@ -55,19 +55,29 @@ jobs:
         run: |
           npx expo prebuild --platform android --no-install --clean
 
-      - name: Set Kotlin 1.9.25 & Build APK
+      - name: Fix Compose & Kotlin Compatibility & Build APK
         working-directory: mobile-app/android
         run: |
-          # Replace Kotlin 1.9.24 with 1.9.25 required by Jetpack Compose 1.5.15
-          find . -name "*.gradle" -exec sed -i 's/1\.9\.24/1.9.25/g' {} +
-          find . -name "gradle.properties" -exec sed -i 's/1\.9\.24/1.9.25/g' {} +
+          # 1. Replace 1.9.24 with 1.9.25 across android and node_modules
+          find .. -name "*.gradle" -exec sed -i 's/1\.9\.24/1.9.25/g' {} +
+          find .. -name "gradle.properties" -exec sed -i 's/1\.9\.24/1.9.25/g' {} +
+          
+          # 2. Add Compose compiler suppression argument to root build.gradle
+          cat << 'EOF' >> build.gradle
+
+          allprojects {
+              tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+                  kotlinOptions {
+                      freeCompilerArgs += [
+                          "-P",
+                          "plugin:androidx.compose.compiler.plugins.kotlin:suppressKotlinVersionCompatibilityCheck=true"
+                      ]
+                  }
+              }
+          }
+          EOF
+
           echo "kotlinVersion=1.9.25" >> gradle.properties
-          echo "suppressKotlinVersionCompatibilityCheck=true" >> gradle.properties
-          echo "androidx.compose.compiler.suppressKotlinVersionCompatibilityCheck=true" >> gradle.properties
-          
-          # Show Kotlin version configured
-          grep -rn "1.9.25" . || true
-          
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon -x lint -x test
 
