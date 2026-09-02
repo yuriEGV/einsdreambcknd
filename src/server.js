@@ -36,9 +36,18 @@ app.use(express.urlencoded({ limit: '10mb', extended: true }));
 // Serve static files from the public directory
 app.use('/public', express.static(path.join(__dirname, '../public')));
 
-// Direct APK download endpoint
-app.get('/download/apk', (req, res) => {
-  res.redirect('/public/einsdream-mobile.apk');
+// Direct APK download endpoint with cache-busting and explicit versioned filename
+app.get(['/download/apk', '/download/apk/:version'], (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+  const apkPath = path.join(__dirname, '../public/einsdream-mobile.apk');
+  res.download(apkPath, 'einsdream-mobile-v2.1.0.apk', (err) => {
+    if (err && !res.headersSent) {
+      res.redirect('/public/einsdream-mobile.apk');
+    }
+  });
 });
 
 let lastDbError = null;

@@ -104,7 +104,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add public/einsdream-mobile.apk
+          cp einsdream-mobile.apk einsdream-mobile-v2.1.0.apk
+          git add public/einsdream-mobile.apk public/einsdream-mobile-v2.1.0.apk
           git commit -m "chore(apk): update public/einsdream-mobile.apk with Hermes bytecode v2.1.0 [skip ci]"
           git push origin main
 
