@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import * as authController from '../controllers/authController.js';
 import * as uploadController from '../controllers/uploadController.js';
 import * as adminController from '../controllers/adminController.js';
+import * as nightSessionController from '../controllers/nightSessionController.js';
 import authMiddleware from '../middleware/authMiddleware.js';
 import adminMiddleware from '../middleware/adminMiddleware.js';
 
@@ -71,6 +72,12 @@ router.get('/sessions/me', authMiddleware, uploadController.getMySessions);
 router.get('/sessions/stats', authMiddleware, uploadController.getSessionStats);
 router.get('/sessions/night', authMiddleware, uploadController.getNightSession);
 router.get('/sessions/night/:date', authMiddleware, uploadController.getNightSession);
+
+// ==================== HEALTH CONNECT & NIGHT ENGINE SESSIONS ====================
+router.post('/night-sessions', authMiddleware, nightSessionController.syncNightSession);
+router.get('/night-sessions/history', authMiddleware, nightSessionController.getNightSessionsHistory);
+router.get('/night-sessions/date/:date', authMiddleware, nightSessionController.getNightSessionByDate);
+router.get('/night-sessions/:id', authMiddleware, nightSessionController.getNightSessionById);
 
 // Audio playback & streaming
 router.get('/sessions/:id/audio', authMiddleware, uploadController.getAudioById);

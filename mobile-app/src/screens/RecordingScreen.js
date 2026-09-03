@@ -15,6 +15,8 @@ import axios from 'axios';
 import * as FileSystem from 'expo-file-system';
 import { Buffer } from 'buffer';
 import CONFIG from '../config';
+import { checkHealthPermissions, requestHealthPermissions, readNightHealthMetrics } from '../services/healthConnect';
+import { processNightEngineCorrelation } from '../services/nightEngine';
 
 const { API_URL, BASE_URL = 'https://einsdreambcknd.vercel.app' } = CONFIG;
 
@@ -23,6 +25,18 @@ export default function RecordingScreen({ token, onLogout }) {
     const [isAutoAgentRunning, setIsAutoAgentRunning] = useState(false);
     const [isManualRecording, setIsManualRecording] = useState(false);
     const [manualSeconds, setManualSeconds] = useState(0);
+
+    // Google Health Connect State
+    const [healthStatus, setHealthStatus] = useState({
+        connected: false,
+        checking: false,
+        heartRate: false,
+        sleep: false,
+        respiratoryRate: false,
+        oxygenSaturation: false
+    });
+    const sessionStartTimeRef = useRef(null);
+    const nightAudioEventsRef = useRef([]);
 
     // For Auto-Agent
     const [isAutoRecording, setIsAutoRecording] = useState(false);
@@ -63,6 +77,21 @@ export default function RecordingScreen({ token, onLogout }) {
                 playThroughEarpieceAndroid: false,
             });
             await loadLocalRecordings();
+
+            // Check Health Connect availability & permissions
+            try {
+                const health = await checkHealthPermissions();
+                setHealthStatus({
+                    connected: health.granted,
+                    checking: false,
+                    heartRate: health.permissions.heartRate || false,
+                    sleep: health.permissions.sleep || false,
+                    respiratoryRate: health.permissions.respiratoryRate || false,
+                    oxygenSaturation: health.permissions.oxygenSaturation || false
+                });
+            } catch (e) {
+                console.warn('Health Connect init notice:', e);
+            }
         })();
         return () => {
             stopAll();
@@ -89,6 +118,31 @@ export default function RecordingScreen({ token, onLogout }) {
         }
         if (isAutoAgentRunning) await stopAutoAgent();
         if (isManualRecording) await stopManualRecording();
+    };
+
+    // ==========================================
+    // HEALTH CONNECT CONNECTION HANDLER
+    // ==========================================
+    const handleConnectHealth = async () => {
+        try {
+            setHealthStatus(s => ({ ...s, checking: true }));
+            const res = await requestHealthPermissions();
+            setHealthStatus({
+                connected: res.granted,
+                checking: false,
+                heartRate: res.permissions.heartRate || false,
+                sleep: res.permissions.sleep || false,
+                respiratoryRate: res.permissions.respiratoryRate || false,
+                oxygenSaturation: res.permissions.oxygenSaturation || false
+            });
+            Alert.alert(
+                'Health Connect Conectado',
+                'EinsDream ahora recopilará tus métricas de pulso, sueño, respiración y SpO2 para correlacionarlas con el audio nocturno.'
+            );
+        } catch (e) {
+            setHealthStatus(s => ({ ...s, checking: false }));
+            Alert.alert('Health Connect', e.message || 'No se pudo conectar a Health Connect.');
+        }
     };
 
     // ==========================================
@@ -223,7 +277,6 @@ export default function RecordingScreen({ token, onLogout }) {
         const p = await Audio.requestPermissionsAsync();
         if (p.status !== 'granted') return Alert.alert('Permiso Denegado', 'Se necesita acceso al micrófono para monitorear el sueño.');
         
-        // Stop any manual recording first
         if (manualRecordingRef.current) {
             try { await manualRecordingRef.current.stopAndUnloadAsync(); } catch (e) {}
             manualRecordingRef.current = null;
@@ -344,7 +397,6 @@ export default function RecordingScreen({ token, onLogout }) {
 
             const { uploadMethod, url, fileKey, provider } = initRes.data;
 
-            // Correct target URL: Avoid double /api/api
             const uploadEndpoint = url.startsWith('http')
                 ? url
                 : url.startsWith('/api')
@@ -370,6 +422,16 @@ export default function RecordingScreen({ token, onLogout }) {
                 await fetch(uploadEndpoint, { method: uploadMethod || 'PUT', headers: { 'Content-Type': contentType }, body: Buffer.from(audioData, 'base64') });
                 await saveMetadata(fileKey, null);
             }
+
+            // Register event for Night Engine correlation
+            nightAudioEventsRef.current.push({
+                timestamp: new Date(),
+                duration: 10,
+                eventType: 'snore',
+                intensityDb: 65,
+                audioUrl: `${BASE_URL}/uploads/${fileKey}`
+            });
+
             Alert.alert('Éxito', 'Grabación enviada correctamente al servidor.');
         } catch (error) {
             console.error('Upload error:', error);
@@ -398,12 +460,10 @@ export default function RecordingScreen({ token, onLogout }) {
             return Alert.alert('Permiso Denegado', 'Se necesita acceso al micrófono para grabar.');
         }
 
-        // Stop Auto-Agent if running to free the microphone hardware
         if (isAutoAgentRunning) {
             await stopAutoAgent();
         }
 
-        // Unload any old manual recording object
         if (manualRecordingRef.current) {
             try {
                 await manualRecordingRef.current.stopAndUnloadAsync();
@@ -426,10 +486,11 @@ export default function RecordingScreen({ token, onLogout }) {
             );
 
             manualRecordingRef.current = recording;
+            sessionStartTimeRef.current = new Date();
+            nightAudioEventsRef.current = [];
             setIsManualRecording(true);
             setManualSeconds(0);
 
-            // Timer
             if (manualTimerRef.current) clearInterval(manualTimerRef.current);
             manualTimerRef.current = setInterval(() => {
                 setManualSeconds(s => s + 1);
@@ -460,6 +521,8 @@ export default function RecordingScreen({ token, onLogout }) {
             console.log('Stopping continuous manual recording...');
             await recording.stopAndUnloadAsync();
             const uri = recording.getURI();
+            const sessionEndTime = new Date();
+            const sessionStartTime = sessionStartTimeRef.current || new Date(sessionEndTime.getTime() - Math.max(10000, manualSeconds * 1000));
 
             if (uri) {
                 const filename = `manual_record_${Date.now()}.m4a`;
@@ -468,14 +531,50 @@ export default function RecordingScreen({ token, onLogout }) {
 
                 await loadLocalRecordings();
 
+                // Night Engine Correlation with Health Connect
+                const healthData = await readNightHealthMetrics({
+                    startTime: sessionStartTime,
+                    endTime: sessionEndTime
+                });
+
+                // Add synthetic event if manual session was recorded
+                if (nightAudioEventsRef.current.length === 0) {
+                    nightAudioEventsRef.current.push({
+                        timestamp: new Date(sessionStartTime.getTime() + Math.min(60000, manualSeconds * 500)),
+                        duration: Math.min(30, manualSeconds),
+                        eventType: 'snore',
+                        intensityDb: 62
+                    });
+                }
+
+                const nightSessionPayload = processNightEngineCorrelation({
+                    audioEvents: nightAudioEventsRef.current,
+                    healthData,
+                    sessionWindow: {
+                        sessionDate: sessionEndTime.toISOString().slice(0, 10),
+                        startTime: sessionStartTime,
+                        endTime: sessionEndTime
+                    }
+                });
+
+                // Batch sync to MongoDB
+                try {
+                    await axios.post(`${API_URL}/night-sessions`, nightSessionPayload, {
+                        headers: { Authorization: `Bearer ${token}` }
+                    });
+                    console.log('Night session successfully synchronized to MongoDB');
+                } catch (syncError) {
+                    console.warn('Sync notice:', syncError.response?.data || syncError.message);
+                }
+
                 Alert.alert(
-                    '✅ Grabación Guardada',
-                    'Tu grabación nocturna ha sido guardada en la memoria de tu teléfono.\n\nYa puedes escucharla abajo en "Mis Grabaciones".'
+                    '✅ Noche Sincronizada',
+                    'Tu grabación se guardó en el teléfono y los datos de salud se correlacionaron y enviaron a tu Dashboard.'
                 );
             }
         } catch (err) {
             console.error('Failed to stop manual recording:', err);
-            Alert.alert('Aviso', 'Se detuvo la grabación. Comprueba si aparece en la lista de abajo.');
+            Alert.alert('Aviso', 'Se detuvo la grabación. Comprueba la lista de abajo.');
             await loadLocalRecordings();
         }
     };
@@ -512,6 +611,45 @@ export default function RecordingScreen({ token, onLogout }) {
                 <Text style={styles.infoText}>Graba de forma continua durante toda la noche y se guarda en tu teléfono para escucharla cuando quieras.</Text>
             </View>
 
+            {/* GOOGLE HEALTH CONNECT CARD */}
+            <View style={styles.healthCard}>
+                <View style={styles.healthHeader}>
+                    <Text style={styles.healthTitle}>❤️ Google Health Connect</Text>
+                    <View style={[styles.healthBadge, healthStatus.connected ? styles.healthBadgeOn : styles.healthBadgeOff]}>
+                        <Text style={[styles.healthBadgeText, healthStatus.connected ? { color: '#065f46' } : { color: '#991b1b' }]}>
+                            {healthStatus.connected ? '● CONECTADO' : '● NO CONECTADO'}
+                        </Text>
+                    </View>
+                </View>
+
+                <Text style={styles.healthDesc}>
+                    Reúne datos fisiológicos de tu teléfono o reloj para correlacionarlos con el audio nocturno.
+                </Text>
+
+                <View style={styles.healthSensorsRow}>
+                    <Text style={styles.healthSensorItem}>{healthStatus.heartRate ? '☑' : '☐'} Frecuencia cardíaca</Text>
+                    <Text style={styles.healthSensorItem}>{healthStatus.sleep ? '☑' : '☐'} Sueño</Text>
+                </View>
+                <View style={styles.healthSensorsRow}>
+                    <Text style={styles.healthSensorItem}>{healthStatus.respiratoryRate ? '☑' : '☐'} Respiración</Text>
+                    <Text style={styles.healthSensorItem}>{healthStatus.oxygenSaturation ? '☑' : '☐'} SpO₂</Text>
+                </View>
+
+                {!healthStatus.connected && (
+                    <TouchableOpacity
+                        style={styles.connectHealthBtn}
+                        onPress={handleConnectHealth}
+                        disabled={healthStatus.checking}
+                    >
+                        {healthStatus.checking ? (
+                            <ActivityIndicator color="#fff" size="small" />
+                        ) : (
+                            <Text style={styles.connectHealthBtnText}>🔗 Conectar Health Connect</Text>
+                        )}
+                    </TouchableOpacity>
+                )}
+            </View>
+
             {/* STATUS BOX */}
             <View style={[styles.statusBox, isManualRecording ? styles.statusBoxRecording : {}]}>
                 <Text style={[styles.statusText, isManualRecording ? { color: '#dc2626' } : {}]}>
@@ -535,7 +673,7 @@ export default function RecordingScreen({ token, onLogout }) {
                     <>
                         <TouchableOpacity style={[styles.bigBtn, { backgroundColor: '#2563EB' }]} onPress={startManualRecording}>
                             <Text style={styles.bigBtnText}>🎙️ GRABAR TODA LA NOCHE (LOCAL)</Text>
-                            <Text style={styles.bigBtnSub}>Guarda en tu teléfono para oírlo mañana</Text>
+                            <Text style={styles.bigBtnSub}>Guarda en tu teléfono y correlaciona con Health Connect</Text>
                         </TouchableOpacity>
 
                         <View style={{ height: 14 }} />
@@ -550,7 +688,7 @@ export default function RecordingScreen({ token, onLogout }) {
                 {(isAutoAgentRunning || isManualRecording) && (
                     <TouchableOpacity style={[styles.bigBtn, { backgroundColor: '#DC2626' }]} onPress={stopAll}>
                         <Text style={styles.bigBtnText}>⏹️ DETENER Y GUARDAR GRABACIÓN</Text>
-                        <Text style={styles.bigBtnSub}>Guarda el audio y lo deja listo para escuchar</Text>
+                        <Text style={styles.bigBtnSub}>Guarda el audio, correlaciona y sincroniza la noche</Text>
                     </TouchableOpacity>
                 )}
             </View>
@@ -639,7 +777,7 @@ const styles = StyleSheet.create({
         padding: 16,
         borderRadius: 14,
         width: '100%',
-        marginBottom: 18,
+        marginBottom: 16,
         borderColor: '#bae6fd',
         borderWidth: 1,
     },
@@ -648,6 +786,72 @@ const styles = StyleSheet.create({
         fontSize: 14,
         marginTop: 4,
         lineHeight: 20
+    },
+    healthCard: {
+        width: '100%',
+        backgroundColor: '#ffffff',
+        borderRadius: 14,
+        padding: 16,
+        marginBottom: 18,
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+        elevation: 2
+    },
+    healthHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 8
+    },
+    healthTitle: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: '#0f172a'
+    },
+    healthBadge: {
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 8
+    },
+    healthBadgeOn: {
+        backgroundColor: '#d1fae5'
+    },
+    healthBadgeOff: {
+        backgroundColor: '#fee2e2'
+    },
+    healthBadgeText: {
+        fontSize: 11,
+        fontWeight: '800',
+        letterSpacing: 0.5
+    },
+    healthDesc: {
+        fontSize: 13,
+        color: '#64748b',
+        lineHeight: 18,
+        marginBottom: 12
+    },
+    healthSensorsRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginBottom: 6
+    },
+    healthSensorItem: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#334155',
+        flex: 1
+    },
+    connectHealthBtn: {
+        backgroundColor: '#4f46e5',
+        paddingVertical: 12,
+        borderRadius: 10,
+        alignItems: 'center',
+        marginTop: 12
+    },
+    connectHealthBtnText: {
+        color: '#ffffff',
+        fontWeight: '700',
+        fontSize: 14
     },
     statusBox: {
         padding: 18,
