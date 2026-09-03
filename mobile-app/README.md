@@ -1,31 +1,50 @@
-﻿# Einsdream Mobile 2.0 (React Native + Expo SDK 54)
+# Welcome to your Expo app 👋
 
-Aplicación móvil nativa para monitorización acústica nocturna con **Foreground Service**, **Wake Lock**, buffer circular y sincronización fluida con el backend Einsdream en Vercel.
+This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
 
-## 📱 Características
-- **Modo Nocturno Simple**: Botón gigante `INICIAR MONITOREO` / `DETENER`.
-- **Grabación en segundo plano**: Configurado con `staysActiveInBackground: true` para continuar capturando aunque la pantalla se apague.
-- **Medidor de dB en vivo**: Detección continua del nivel sonoro con `Audio.Recording`.
-- **Subida directa a la nube**: Conexión directa a `https://einsdreambcknd.vercel.app/api`.
-- **Pre-Roll / Post-Roll**: Captura de segmentos con contexto real del evento.
+## Get started
 
-## 🚀 Cómo ejecutar localmente
+1. Install dependencies
+
+   ```bash
+   npm install
+   ```
+
+2. Start the app
+
+   ```bash
+   npx expo start
+   ```
+
+In the output, you'll find options to open the app in a
+
+- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
+- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
+- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
+- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+
+You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+
+## Get a fresh project
+
+When you're ready, run:
+
 ```bash
-cd mobile-app
-npm install
-npx expo start
+npm run reset-project
 ```
 
-## 📦 Cómo compilar una nueva APK para Android
-1. Instala EAS CLI:
-   ```bash
-   npm install -g eas-cli
-   ```
-2. Inicia sesión en tu cuenta Expo:
-   ```bash
-   eas login
-   ```
-3. Genera la APK compilada:
-   ```bash
-   eas build -p android --profile preview
-   ```
+This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+
+## Learn more
+
+To learn more about developing your project with Expo, look at the following resources:
+
+- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
+- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+
+## Join the community
+
+Join our community of developers creating universal apps.
+
+- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
+- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
