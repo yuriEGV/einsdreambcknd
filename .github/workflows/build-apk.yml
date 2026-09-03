@@ -73,7 +73,10 @@ jobs:
           # Verify bundle is stored uncompressed
           python3 -c "import zipfile; z=zipfile.ZipFile('einsdream-mobile.apk'); e=z.getinfo('assets/index.android.bundle'); print('Bundle compressed:', e.compress_size, 'raw:', e.file_size); assert e.compress_size == e.file_size, 'Bundle must be uncompressed for Hermes mmap!'"
 
-          # 2. Assert critical Kotlin coroutines services are intact
+          # 2. Patch AndroidManifest.xml and app.config to version 2.1.0
+          python3 ../scripts/patch_apk_metadata.py einsdream-mobile.apk
+
+          # 3. Assert critical Kotlin coroutines services are intact
           python3 -c "import zipfile; z=zipfile.ZipFile('einsdream-mobile.apk'); assert 'META-INF/services/kotlinx.coroutines.internal.MainDispatcherFactory' in z.namelist(), 'CRITICAL: MainDispatcherFactory missing!'"
 
           # 3. Remove old signature files ONLY (never touch META-INF/services!)
