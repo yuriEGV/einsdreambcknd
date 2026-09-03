@@ -16,12 +16,13 @@ import * as FileSystem from 'expo-file-system';
 import { Buffer } from 'buffer';
 import CONFIG from '../config';
 
-const { API_URL } = CONFIG;
+const { API_URL, BASE_URL = 'https://einsdreambcknd.vercel.app' } = CONFIG;
 
 export default function RecordingScreen({ token, onLogout }) {
     const [hasPermission, setHasPermission] = useState(false);
     const [isAutoAgentRunning, setIsAutoAgentRunning] = useState(false);
     const [isManualRecording, setIsManualRecording] = useState(false);
+    const [manualSeconds, setManualSeconds] = useState(0);
 
     // For Auto-Agent
     const [isAutoRecording, setIsAutoRecording] = useState(false);
@@ -40,6 +41,7 @@ export default function RecordingScreen({ token, onLogout }) {
     const backgroundListenerRef = useRef(null);
     const autoRecordingRef = useRef(null);
     const manualRecordingRef = useRef(null);
+    const manualTimerRef = useRef(null);
 
     const autoRecordingTimeoutRef = useRef(null);
     const autoStopTimeoutRef = useRef(null);
@@ -58,6 +60,7 @@ export default function RecordingScreen({ token, onLogout }) {
                 playsInSilentModeIOS: true,
                 staysActiveInBackground: true,
                 shouldDuckAndroid: true,
+                playThroughEarpieceAndroid: false,
             });
             await loadLocalRecordings();
         })();
@@ -80,6 +83,10 @@ export default function RecordingScreen({ token, onLogout }) {
     };
 
     const stopAll = async () => {
+        if (manualTimerRef.current) {
+            clearInterval(manualTimerRef.current);
+            manualTimerRef.current = null;
+        }
         if (isAutoAgentRunning) await stopAutoAgent();
         if (isManualRecording) await stopManualRecording();
     };
@@ -101,7 +108,7 @@ export default function RecordingScreen({ token, onLogout }) {
                     const info = await FileSystem.getInfoAsync(fileUri);
                     const sizeMb = info.size ? (info.size / (1024 * 1024)).toFixed(1) : '0.1';
                     
-                    let dateStr = 'Grabación reciente';
+                    let dateStr = 'Grabación nocturna';
                     if (file.startsWith('manual_record_')) {
                         const ts = parseInt(file.replace('manual_record_', '').replace('.m4a', ''));
                         if (!isNaN(ts)) {
@@ -203,13 +210,34 @@ export default function RecordingScreen({ token, onLogout }) {
         return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
     };
 
+    const formatSeconds = (totalSecs) => {
+        const mins = Math.floor(totalSecs / 60);
+        const secs = totalSecs % 60;
+        return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    };
+
     // ==========================================
     // 1. AUTO-AGENT CLOUD RECORDING
     // ==========================================
     const startAutoAgent = async () => {
-        if (!hasPermission) return Alert.alert('Permiso Denegado', 'Se necesita acceso al micrófono.');
+        const p = await Audio.requestPermissionsAsync();
+        if (p.status !== 'granted') return Alert.alert('Permiso Denegado', 'Se necesita acceso al micrófono para monitorear el sueño.');
+        
+        // Stop any manual recording first
+        if (manualRecordingRef.current) {
+            try { await manualRecordingRef.current.stopAndUnloadAsync(); } catch (e) {}
+            manualRecordingRef.current = null;
+        }
+        setIsManualRecording(false);
+
         try {
-            console.log('Starting Auto-Agent VAD listener...');
+            await Audio.setAudioModeAsync({
+                allowsRecordingIOS: true,
+                playsInSilentModeIOS: true,
+                staysActiveInBackground: true,
+                shouldDuckAndroid: true,
+            });
+
             setIsAutoAgentRunning(true);
             const { recording } = await Audio.Recording.createAsync(
                 Audio.RecordingOptionsPresets.LOW_QUALITY,
@@ -226,12 +254,16 @@ export default function RecordingScreen({ token, onLogout }) {
             backgroundListenerRef.current = recording;
         } catch (err) {
             console.error(err);
+            setIsAutoAgentRunning(false);
+            Alert.alert('Error', 'No se pudo iniciar el escucha de ruido automático.');
         }
     };
 
     const stopVADListener = async () => {
         if (!backgroundListenerRef.current) return;
-        await backgroundListenerRef.current.stopAndUnloadAsync();
+        try {
+            await backgroundListenerRef.current.stopAndUnloadAsync();
+        } catch (e) {}
         backgroundListenerRef.current = null;
     };
 
@@ -270,6 +302,7 @@ export default function RecordingScreen({ token, onLogout }) {
 
         } catch (err) {
             console.error(err);
+            setIsAutoRecording(false);
         }
     };
 
@@ -301,7 +334,7 @@ export default function RecordingScreen({ token, onLogout }) {
 
     const uploadAudio = async (uri) => {
         try {
-            const filename = uri.split('/').pop();
+            const filename = uri.split('/').pop() || `event_${Date.now()}.m4a`;
             const contentType = Platform.OS === 'ios' ? 'audio/x-m4a' : 'audio/m4a';
 
             const initRes = await axios.post(`${API_URL}/upload/init`,
@@ -311,6 +344,13 @@ export default function RecordingScreen({ token, onLogout }) {
 
             const { uploadMethod, url, fileKey, provider } = initRes.data;
 
+            // Correct target URL: Avoid double /api/api
+            const uploadEndpoint = url.startsWith('http')
+                ? url
+                : url.startsWith('/api')
+                    ? `${BASE_URL}${url}`
+                    : `${API_URL}/${url}`;
+
             if (provider === 'local') {
                 const formData = new FormData();
                 formData.append('audio', {
@@ -318,7 +358,7 @@ export default function RecordingScreen({ token, onLogout }) {
                     name: filename,
                     type: contentType,
                 });
-                const localRes = await axios.post(`${API_URL}${url}`, formData, {
+                const localRes = await axios.post(uploadEndpoint, formData, {
                     headers: {
                         Authorization: `Bearer ${token}`,
                         'Content-Type': 'multipart/form-data',
@@ -327,7 +367,7 @@ export default function RecordingScreen({ token, onLogout }) {
                 await saveMetadata(localRes.data.fileKey || fileKey, localRes.data.fileData);
             } else {
                 const audioData = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
-                await fetch(url, { method: uploadMethod || 'PUT', headers: { 'Content-Type': contentType }, body: Buffer.from(audioData, 'base64') });
+                await fetch(uploadEndpoint, { method: uploadMethod || 'PUT', headers: { 'Content-Type': contentType }, body: Buffer.from(audioData, 'base64') });
                 await saveMetadata(fileKey, null);
             }
             Alert.alert('Éxito', 'Grabación enviada correctamente al servidor.');
@@ -350,31 +390,74 @@ export default function RecordingScreen({ token, onLogout }) {
     };
 
     // ==========================================
-    // 2. MANUAL LOCAL RECORDING
+    // 2. MANUAL LOCAL RECORDING (TODA LA NOCHE)
     // ==========================================
     const startManualRecording = async () => {
-        if (!hasPermission) return Alert.alert('Permiso Denegado', 'Se necesita acceso al micrófono.');
+        const p = await Audio.requestPermissionsAsync();
+        if (p.status !== 'granted') {
+            return Alert.alert('Permiso Denegado', 'Se necesita acceso al micrófono para grabar.');
+        }
+
+        // Stop Auto-Agent if running to free the microphone hardware
+        if (isAutoAgentRunning) {
+            await stopAutoAgent();
+        }
+
+        // Unload any old manual recording object
+        if (manualRecordingRef.current) {
+            try {
+                await manualRecordingRef.current.stopAndUnloadAsync();
+            } catch (e) {}
+            manualRecordingRef.current = null;
+        }
+
         try {
+            await Audio.setAudioModeAsync({
+                allowsRecordingIOS: true,
+                playsInSilentModeIOS: true,
+                staysActiveInBackground: true,
+                shouldDuckAndroid: true,
+                playThroughEarpieceAndroid: false
+            });
+
             console.log('Starting continuous manual recording...');
-            setIsManualRecording(true);
             const { recording } = await Audio.Recording.createAsync(
                 Audio.RecordingOptionsPresets.HIGH_QUALITY
             );
+
             manualRecordingRef.current = recording;
+            setIsManualRecording(true);
+            setManualSeconds(0);
+
+            // Timer
+            if (manualTimerRef.current) clearInterval(manualTimerRef.current);
+            manualTimerRef.current = setInterval(() => {
+                setManualSeconds(s => s + 1);
+            }, 1000);
+
         } catch (err) {
-            console.error(err);
-            Alert.alert('Error', 'No se pudo iniciar la grabación manual.');
+            console.error('Failed to start manual recording:', err);
+            setIsManualRecording(false);
+            Alert.alert('Error', 'No se pudo iniciar la grabación: ' + (err.message || 'Error del micrófono'));
         }
     };
 
     const stopManualRecording = async () => {
-        if (!manualRecordingRef.current) return;
+        if (manualTimerRef.current) {
+            clearInterval(manualTimerRef.current);
+            manualTimerRef.current = null;
+        }
+
+        const recording = manualRecordingRef.current;
+        manualRecordingRef.current = null;
+        setIsManualRecording(false);
+
+        if (!recording) {
+            return;
+        }
+
         try {
             console.log('Stopping continuous manual recording...');
-            setIsManualRecording(false);
-            const recording = manualRecordingRef.current;
-            manualRecordingRef.current = null;
-
             await recording.stopAndUnloadAsync();
             const uri = recording.getURI();
 
@@ -386,16 +469,35 @@ export default function RecordingScreen({ token, onLogout }) {
                 await loadLocalRecordings();
 
                 Alert.alert(
-                    'Grabación Local Guardada',
-                    'Tu grabación nocturna ha sido guardada directamente en tu teléfono. Ya puedes escucharla abajo en "Mis Grabaciones".'
+                    '✅ Grabación Guardada',
+                    'Tu grabación nocturna ha sido guardada en la memoria de tu teléfono.\n\nYa puedes escucharla abajo en "Mis Grabaciones".'
                 );
             }
         } catch (err) {
-            console.error('Failed to stop manual recording', err);
-            Alert.alert('Error', 'No se pudo detener o guardar la grabación local.');
-            setIsManualRecording(false);
-            manualRecordingRef.current = null;
+            console.error('Failed to stop manual recording:', err);
+            Alert.alert('Aviso', 'Se detuvo la grabación. Comprueba si aparece en la lista de abajo.');
+            await loadLocalRecordings();
         }
+    };
+
+    // Test recording (5 seconds)
+    const runQuickTestRecording = async () => {
+        Alert.alert(
+            'Grabar Audio de Prueba',
+            'Se grabarán 5 segundos para probar el micrófono y el reproductor.',
+            [
+                { text: 'Cancelar', style: 'cancel' },
+                {
+                    text: 'Iniciar Prueba',
+                    onPress: async () => {
+                        await startManualRecording();
+                        setTimeout(async () => {
+                            await stopManualRecording();
+                        }, 5000);
+                    }
+                }
+            ]
+        );
     };
 
     return (
@@ -410,35 +512,45 @@ export default function RecordingScreen({ token, onLogout }) {
                 <Text style={styles.infoText}>Graba de forma continua durante toda la noche y se guarda en tu teléfono para escucharla cuando quieras.</Text>
             </View>
 
-            <View style={styles.statusBox}>
-                <Text style={styles.statusText}>
-                    {isManualRecording ? "🔴 GRABANDO TODA LA NOCHE..." :
-                        isAutoAgentRunning ? (isAutoRecording ? "🔴 CAPTURANDO AUDIO..." : "👂 ESCUCHANDO RUIDO...") :
-                            "⚪ INACTIVO"}
+            {/* STATUS BOX */}
+            <View style={[styles.statusBox, isManualRecording ? styles.statusBoxRecording : {}]}>
+                <Text style={[styles.statusText, isManualRecording ? { color: '#dc2626' } : {}]}>
+                    {isManualRecording ? `🔴 GRABANDO TODA LA NOCHE (${formatSeconds(manualSeconds)})` :
+                        isAutoAgentRunning ? (isAutoRecording ? "🔴 CAPTURANDO RUIDO (NUBE)..." : "👂 ESCUCHANDO RUIDO...") :
+                            "⚪ INACTIVO - LISTO PARA GRABAR"}
                 </Text>
+                {isManualRecording && (
+                    <Text style={{ color: '#64748b', marginTop: 6, fontSize: 13 }}>
+                        El teléfono está grabando tu noche continuamente. Presiona "DETENER" cuando despiertes.
+                    </Text>
+                )}
                 {isAutoAgentRunning && (
                     <Text style={{ color: '#666', marginTop: 8 }}>Nivel de Ruido: {meteringValue} dB</Text>
                 )}
             </View>
 
+            {/* MAIN BUTTONS */}
             <View style={styles.buttonContainer}>
                 {!isManualRecording && !isAutoAgentRunning && (
                     <>
-                        <TouchableOpacity style={[styles.bigBtn, { backgroundColor: '#10B981' }]} onPress={startAutoAgent}>
-                            <Text style={styles.bigBtnText}>☁️ ACTIVAR AUTO-AGENT (NUBE)</Text>
-                        </TouchableOpacity>
-
-                        <View style={{ height: 16 }} />
-
                         <TouchableOpacity style={[styles.bigBtn, { backgroundColor: '#2563EB' }]} onPress={startManualRecording}>
                             <Text style={styles.bigBtnText}>🎙️ GRABAR TODA LA NOCHE (LOCAL)</Text>
+                            <Text style={styles.bigBtnSub}>Guarda en tu teléfono para oírlo mañana</Text>
+                        </TouchableOpacity>
+
+                        <View style={{ height: 14 }} />
+
+                        <TouchableOpacity style={[styles.bigBtn, { backgroundColor: '#10B981' }]} onPress={startAutoAgent}>
+                            <Text style={styles.bigBtnText}>☁️ ACTIVAR AUTO-AGENT (NUBE)</Text>
+                            <Text style={styles.bigBtnSub}>Graba solo cuando detecta ronquidos o ruidos</Text>
                         </TouchableOpacity>
                     </>
                 )}
 
                 {(isAutoAgentRunning || isManualRecording) && (
                     <TouchableOpacity style={[styles.bigBtn, { backgroundColor: '#DC2626' }]} onPress={stopAll}>
-                        <Text style={styles.bigBtnText}>⏹️ DETENER GRABACIÓN</Text>
+                        <Text style={styles.bigBtnText}>⏹️ DETENER Y GUARDAR GRABACIÓN</Text>
+                        <Text style={styles.bigBtnSub}>Guarda el audio y lo deja listo para escuchar</Text>
                     </TouchableOpacity>
                 )}
             </View>
@@ -455,9 +567,14 @@ export default function RecordingScreen({ token, onLogout }) {
                 {isLoadingRecordings ? (
                     <ActivityIndicator size="small" color="#2563EB" style={{ marginVertical: 20 }} />
                 ) : localRecordings.length === 0 ? (
-                    <Text style={styles.emptyText}>
-                        Aún no tienes grabaciones locales guardadas. Inicia una con el botón azul de arriba.
-                    </Text>
+                    <View style={{ alignItems: 'center', paddingVertical: 12 }}>
+                        <Text style={styles.emptyText}>
+                            Aún no tienes grabaciones guardadas en tu teléfono.
+                        </Text>
+                        <TouchableOpacity style={styles.testBtn} onPress={runQuickTestRecording}>
+                            <Text style={styles.testBtnText}>🎵 Grabar 5 seg de prueba para oír el audio</Text>
+                        </TouchableOpacity>
+                    </View>
                 ) : (
                     localRecordings.map((rec) => {
                         const isThisPlaying = playingUri === rec.uri && isPlaying;
@@ -522,7 +639,7 @@ const styles = StyleSheet.create({
         padding: 16,
         borderRadius: 14,
         width: '100%',
-        marginBottom: 20,
+        marginBottom: 18,
         borderColor: '#bae6fd',
         borderWidth: 1,
     },
@@ -533,29 +650,33 @@ const styles = StyleSheet.create({
         lineHeight: 20
     },
     statusBox: {
-        padding: 20,
+        padding: 18,
         backgroundColor: '#ffffff',
         borderRadius: 14,
         width: '100%',
         alignItems: 'center',
-        marginBottom: 24,
+        marginBottom: 20,
         borderWidth: 1,
         borderColor: '#e2e8f0',
         elevation: 2
     },
+    statusBoxRecording: {
+        borderColor: '#fca5a5',
+        backgroundColor: '#fff1f2'
+    },
     statusText: {
-        fontSize: 18,
+        fontSize: 17,
         fontWeight: 'bold',
         textAlign: 'center',
         color: '#1e293b'
     },
     buttonContainer: {
         width: '100%',
-        marginBottom: 24
+        marginBottom: 22
     },
     bigBtn: {
-        paddingVertical: 18,
-        paddingHorizontal: 20,
+        paddingVertical: 16,
+        paddingHorizontal: 18,
         borderRadius: 14,
         alignItems: 'center',
         justifyContent: 'center',
@@ -566,6 +687,11 @@ const styles = StyleSheet.create({
         fontSize: 17,
         fontWeight: 'bold',
         letterSpacing: 0.5
+    },
+    bigBtnSub: {
+        color: 'rgba(255, 255, 255, 0.85)',
+        fontSize: 12,
+        marginTop: 3
     },
     recordingsCard: {
         width: '100%',
@@ -603,9 +729,22 @@ const styles = StyleSheet.create({
     emptyText: {
         color: '#64748b',
         textAlign: 'center',
-        marginVertical: 20,
+        marginBottom: 14,
         fontSize: 14,
         lineHeight: 22
+    },
+    testBtn: {
+        backgroundColor: '#e0e7ff',
+        paddingVertical: 12,
+        paddingHorizontal: 18,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: '#c7d2fe'
+    },
+    testBtnText: {
+        color: '#3730a3',
+        fontWeight: '700',
+        fontSize: 14
     },
     recItem: {
         flexDirection: 'row',
