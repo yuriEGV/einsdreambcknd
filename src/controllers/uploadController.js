@@ -109,13 +109,11 @@ export const handleLocalUpload = async (req, res) => {
         const fileKey = req.file.filename;
 
         let base64Data = null;
-        if (isVercel) {
-            try {
-                const fileBuffer = fs.readFileSync(filePath);
-                base64Data = `data:${req.file.mimetype || 'audio/m4a'};base64,${fileBuffer.toString('base64')}`;
-            } catch (e) {
-                console.warn('Could not read file for base64 payload:', e.message);
-            }
+        try {
+            const fileBuffer = fs.readFileSync(filePath);
+            base64Data = `data:${req.file.mimetype || 'audio/m4a'};base64,${fileBuffer.toString('base64')}`;
+        } catch (e) {
+            console.warn('Could not read file for base64 payload:', e.message);
         }
 
         res.json({
