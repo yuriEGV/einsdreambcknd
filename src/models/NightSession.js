@@ -94,8 +94,8 @@ const nightSessionSchema = new mongoose.Schema({
     },
     healthSource: {
         type: String,
-        enum: ['health_connect', 'apple_health', 'manual', 'none'],
-        default: 'health_connect'
+        enum: ['health_connect', 'apple_health', 'standalone_acoustic', 'manual', 'none'],
+        default: 'standalone_acoustic'
     },
     // Sleep Stage intervals and metrics
     sleepSummary: {

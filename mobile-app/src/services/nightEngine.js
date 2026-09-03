@@ -143,7 +143,7 @@ export function processNightEngineCorrelation({ audioEvents = [], healthData = {
         sessionDate: sessionDate || new Date().toISOString().slice(0, 10),
         startTime: new Date(startTime || Date.now() - 8 * 3600 * 1000),
         endTime: new Date(endTime || Date.now()),
-        healthSource: heartRateSeries.length > 0 ? 'health_connect' : 'none',
+        healthSource: heartRateSeries.length > 0 ? 'health_connect' : 'standalone_acoustic',
         sleepSummary,
         heartRateSeries,
         respiratoryRateSeries,
@@ -160,7 +160,9 @@ export function processNightEngineCorrelation({ audioEvents = [], healthData = {
             totalCoughEvents: correlatedEvents.filter(e => e.eventType === 'cough').length,
             evaluationNote: correlatedEvents.length === 0
                 ? 'Noche tranquila sin perturbaciones acústicas relevantes detectadas.'
-                : `Se registraron ${correlatedEvents.length} eventos acústicos nocturnos correlacionados con Health Connect.`
+                : (heartRateSeries.length > 0
+                    ? `Se registraron ${correlatedEvents.length} eventos acústicos nocturnos correlacionados con Health Connect.`
+                    : `Modo Autónomo Acústico: Se registraron ${correlatedEvents.length} eventos de audio nocturnos por micrófono.`)
         }
     };
 }
