@@ -45,15 +45,31 @@ jobs:
         working-directory: mobile-app
         run: |
           mkdir -p ../public/assets
+
+          # Generate Hermes bytecode bundle with official Expo CLI (babel-preset-expo included)
           npx expo export:embed \
             --platform android \
             --dev false \
             --bundle-output ../public/assets/index.android.bundle \
             --bytecode
 
-          echo "Expo Hermes bytecode size and header:"
+          echo "=== Bundle verification ==="
           ls -lh ../public/assets/index.android.bundle
-          od -t x1 -N 16 ../public/assets/index.android.bundle
+          od -t x1 -N 8 ../public/assets/index.android.bundle
+
+          # Confirm NO keepAwake or SplashScreen in bundle (they cause crash if bundled without native bridge)
+          python3 -c "
+import re
+with open('../public/assets/index.android.bundle','rb') as f:
+    data = f.read().decode('latin-1')
+has_ka = 'keepawake' in data.lower()
+has_sp = 'splashscreen' in data.lower()
+print('keepAwake in bundle:', has_ka)
+print('SplashScreen in bundle:', has_sp)
+assert not has_ka, 'FAIL: keepAwake found in bundle - will cause crash!'
+assert not has_sp, 'FAIL: SplashScreen found in bundle - will cause crash!'
+print('PASS: bundle is clean')
+"
 
       - name: Inject Hermes Bytecode into APK & Re-sign with apksigner
         run: |
@@ -65,48 +81,44 @@ jobs:
           # 1. Update assets/index.android.bundle inside APK UNCOMPRESSED (-0) for Hermes mmap
           zip -0 -u einsdream-mobile.apk assets/index.android.bundle
           
-          # Verify bundle is stored uncompressed for Android NDK AAsset_getBuffer()
+          # Verify bundle is stored uncompressed
           python3 -c "import zipfile; z=zipfile.ZipFile('einsdream-mobile.apk'); e=z.getinfo('assets/index.android.bundle'); print('Bundle compressed:', e.compress_size, 'raw:', e.file_size); assert e.compress_size == e.file_size, 'Bundle must be uncompressed for Hermes mmap!'"
 
-          # 2. Update app.config version to 2.1.0 if exists
-          unzip -p einsdream-mobile.apk assets/app.config > assets/app.config 2>/dev/null || true
-          if [ -f assets/app.config ]; then
-            sed -i 's/"version":"[^"]*"/"version":"2.1.0"/g' assets/app.config
-            zip -u einsdream-mobile.apk assets/app.config
-          fi
-
-          # 3. Assert critical Kotlin coroutines & AndroidX services are intact in META-INF
+          # 2. Assert critical Kotlin coroutines services are intact
           python3 -c "import zipfile; z=zipfile.ZipFile('einsdream-mobile.apk'); assert 'META-INF/services/kotlinx.coroutines.internal.MainDispatcherFactory' in z.namelist(), 'CRITICAL: MainDispatcherFactory missing!'"
 
-          # 4. Remove signature files ONLY (never delete META-INF/services!)
+          # 3. Remove old signature files ONLY (never touch META-INF/services!)
           zip -d einsdream-mobile.apk "META-INF/*.SF" "META-INF/*.RSA" "META-INF/*.DSA" 2>/dev/null || true
           
-          # 5. Create Android debug keystore
+          # 4. Create keystore
           keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Einsdream,O=Einsdream,C=CL"
           
-          # 6. Zipalign the APK
+          # 5. Zipalign
           "$BUILD_TOOLS/zipalign" -f -v 4 einsdream-mobile.apk einsdream-mobile-aligned.apk
           
-          # 7. Sign with apksigner (v2 & v3 schemes matching original APK)
+          # 6. Sign
           "$BUILD_TOOLS/apksigner" sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android --out einsdream-mobile.apk einsdream-mobile-aligned.apk
           
-          # 8. Verify signature and confirm MainDispatcherFactory survives
-          "$BUILD_TOOLS/apksigner" verify -v --print-certs einsdream-mobile.apk
-          python3 -c "import zipfile; z=zipfile.ZipFile('einsdream-mobile.apk'); assert 'META-INF/services/kotlinx.coroutines.internal.MainDispatcherFactory' in z.namelist(), 'CRITICAL: MainDispatcherFactory was lost!'"
+          # 7. Final verification
+          "$BUILD_TOOLS/apksigner" verify -v einsdream-mobile.apk
+          python3 -c "import zipfile; z=zipfile.ZipFile('einsdream-mobile.apk'); assert 'META-INF/services/kotlinx.coroutines.internal.MainDispatcherFactory' in z.namelist(), 'CRITICAL: MainDispatcherFactory was lost after signing!'"
           
-          # Clean up temporary artifacts
-          rm -rf debug.keystore einsdream-mobile-aligned.apk assets
+          # 8. Cleanup
+          rm -f debug.keystore einsdream-mobile-aligned.apk
+          rm -rf assets
           
-          echo "Final APK details:"
+          echo "=== Final APK ==="
           ls -lh einsdream-mobile.apk
 
       - name: Commit & Push new APK to repository
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Copy versioned copy
           cp public/einsdream-mobile.apk public/einsdream-mobile-v2.1.0.apk
           git add public/einsdream-mobile.apk public/einsdream-mobile-v2.1.0.apk
-          git commit -m "chore(apk): update public/einsdream-mobile.apk with Hermes bytecode v2.1.0 [skip ci]"
+          # Always commit (--allow-empty handles case where binary is identical)
+          git commit --allow-empty -m "chore(apk): update einsdream-mobile.apk Hermes bytecode v2.1.0 [skip ci]"
           git push origin main
 
       - name: Upload APK artifact
