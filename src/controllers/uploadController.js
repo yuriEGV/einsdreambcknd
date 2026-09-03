@@ -1,4 +1,4 @@
-﻿import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Storage } from '@google-cloud/storage';
 import fs from 'fs';
@@ -567,23 +567,27 @@ export const addSessionComment = async (req, res) => {
             return res.status(400).json({ message: 'Comment text is required' });
         }
 
-        const session = await AudioSession.findById(id);
-        if (!session) {
+        const updated = await AudioSession.findByIdAndUpdate(
+            id,
+            {
+                $push: {
+                    comments: {
+                        text: text.trim(),
+                        author: req.user?.email || 'User',
+                        createdAt: new Date()
+                    }
+                }
+            },
+            { new: true, runValidators: false }
+        );
+
+        if (!updated) {
             return res.status(404).json({ message: 'Session not found' });
         }
 
-        session.comments = session.comments || [];
-        session.comments.push({
-            text: text.trim(),
-            author: req.user.email || 'User',
-            createdAt: new Date()
-        });
-
-        await session.save();
-
         res.json({
             message: 'Comment added successfully',
-            comments: session.comments
+            comments: updated.comments || []
         });
     } catch (error) {
         console.error('Error adding comment:', error);
