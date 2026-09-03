@@ -57,19 +57,8 @@ jobs:
           ls -lh ../public/assets/index.android.bundle
           od -t x1 -N 8 ../public/assets/index.android.bundle
 
-          # Confirm NO keepAwake or SplashScreen in bundle (they cause crash if bundled without native bridge)
-          python3 -c "
-import re
-with open('../public/assets/index.android.bundle','rb') as f:
-    data = f.read().decode('latin-1')
-has_ka = 'keepawake' in data.lower()
-has_sp = 'splashscreen' in data.lower()
-print('keepAwake in bundle:', has_ka)
-print('SplashScreen in bundle:', has_sp)
-assert not has_ka, 'FAIL: keepAwake found in bundle - will cause crash!'
-assert not has_sp, 'FAIL: SplashScreen found in bundle - will cause crash!'
-print('PASS: bundle is clean')
-"
+          # Confirm NO keepAwake or SplashScreen in bundle (they cause crash)
+          python3 -c "import sys; data=open('../public/assets/index.android.bundle','rb').read().decode('latin-1'); ka='keepawake' in data.lower(); sp='splashscreen' in data.lower(); print('keepAwake:',ka,'SplashScreen:',sp); sys.exit(1 if ka or sp else 0)"
 
       - name: Inject Hermes Bytecode into APK & Re-sign with apksigner
         run: |
