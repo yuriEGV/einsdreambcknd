@@ -15,8 +15,7 @@ import {
 } from 'react-native';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
-import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
-import * as SplashScreen from 'expo-splash-screen';
+// expo-keep-awake and expo-splash-screen are NOT bundled by expo export:embed — removed to prevent crash
 import { loginUser, logoutUser, getUserSession, uploadAudioFile } from './src/services/api';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -310,8 +309,7 @@ function MainApp() {
         console.warn('Session check error:', e);
       } finally {
         setLoading(false);
-        // Hide splash screen smoothly
-        await SplashScreen.hideAsync().catch(() => {});
+        // Splash screen hides automatically via native side
       }
     }
     init();
@@ -404,7 +402,7 @@ function MainApp() {
         staysActiveInBackground: true,
         shouldDuckAndroid: true,
       });
-      await activateKeepAwakeAsync().catch(() => {});
+      // keepAwake removed — not bundled in APK native modules
       await ensureDir();
       setIsMonitoring(true);
       setEvents(0);
@@ -494,7 +492,7 @@ function MainApp() {
 
   const stopMonitoring = async () => {
     setIsMonitoring(false);
-    deactivateKeepAwake().catch(() => {});
+    // keepAwake removed — not bundled in APK native modules
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
