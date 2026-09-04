@@ -36,6 +36,12 @@ app.use(express.urlencoded({ limit: '10mb', extended: true }));
 // Serve static files from the public directory
 app.use('/public', express.static(path.join(__dirname, '../public')));
 
+// Specific handler for versioned APK downloads
+app.get(['/public/einsdream-mobile-v2.1.1.apk', '/public/einsdream-mobile-v2.1.0.apk'], (req, res) => {
+  const apkPath = path.join(__dirname, '../public/einsdream-mobile.apk');
+  res.download(apkPath, 'einsdream-mobile-v2.1.1.apk');
+});
+
 // Direct APK download endpoint with cache-busting and explicit versioned filename
 app.get(['/download/apk', '/download/apk/:version'], (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
@@ -43,7 +49,8 @@ app.get(['/download/apk', '/download/apk/:version'], (req, res) => {
   res.setHeader('Expires', '0');
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
   const apkPath = path.join(__dirname, '../public/einsdream-mobile.apk');
-  res.download(apkPath, 'einsdream-mobile-v2.1.0.apk', (err) => {
+  const targetFilename = req.params.version ? `einsdream-mobile-v${req.params.version}.apk` : 'einsdream-mobile-v2.1.1.apk';
+  res.download(apkPath, targetFilename, (err) => {
     if (err && !res.headersSent) {
       res.redirect('/public/einsdream-mobile.apk');
     }

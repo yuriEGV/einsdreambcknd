@@ -110,7 +110,7 @@ jobs:
           cp public/einsdream-mobile.apk public/einsdream-mobile-v2.1.1.apk
           git add public/einsdream-mobile.apk public/einsdream-mobile-v2.1.1.apk
           # Always commit (--allow-empty handles case where binary is identical)
-          git commit --allow-empty -m "chore(apk): update einsdream-mobile.apk Hermes bytecode v2.1.1 [skip ci]"
+          git commit --allow-empty -m "chore(apk): update einsdream-mobile.apk Hermes bytecode v2.1.1 [skip actions]"
           git push origin main
 
       - name: Upload APK artifact
