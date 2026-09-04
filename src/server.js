@@ -33,14 +33,14 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-// Serve static files from the public directory
-app.use('/public', express.static(path.join(__dirname, '../public')));
-
 // Specific handler for versioned APK downloads
 app.get(['/public/einsdream-mobile-v2.1.1.apk', '/public/einsdream-mobile-v2.1.0.apk'], (req, res) => {
   const apkPath = path.join(__dirname, '../public/einsdream-mobile.apk');
   res.download(apkPath, 'einsdream-mobile-v2.1.1.apk');
 });
+
+// Serve static files from the public directory
+app.use('/public', express.static(path.join(__dirname, '../public')));
 
 // Direct APK download endpoint with cache-busting and explicit versioned filename
 app.get(['/download/apk', '/download/apk/:version'], (req, res) => {
