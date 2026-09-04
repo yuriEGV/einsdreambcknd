@@ -10,7 +10,7 @@ on:
 
 jobs:
   build-apk:
-    name: Build Einsdream APK v2.1.0
+    name: Build Einsdream APK v2.1.1
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -41,7 +41,7 @@ jobs:
         run: |
           npm install
 
-      - name: Bundle Official Expo Hermes Bytecode v2.1.0
+      - name: Bundle Official Expo Hermes Bytecode v2.1.1
         working-directory: mobile-app
         run: |
           mkdir -p ../public/assets
@@ -107,15 +107,15 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # Copy versioned copy
-          cp public/einsdream-mobile.apk public/einsdream-mobile-v2.1.0.apk
-          git add public/einsdream-mobile.apk public/einsdream-mobile-v2.1.0.apk
+          cp public/einsdream-mobile.apk public/einsdream-mobile-v2.1.1.apk
+          git add public/einsdream-mobile.apk public/einsdream-mobile-v2.1.1.apk
           # Always commit (--allow-empty handles case where binary is identical)
-          git commit --allow-empty -m "chore(apk): update einsdream-mobile.apk Hermes bytecode v2.1.0 [skip ci]"
+          git commit --allow-empty -m "chore(apk): update einsdream-mobile.apk Hermes bytecode v2.1.1 [skip ci]"
           git push origin main
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: einsdream-mobile-v2.1.0
+          name: einsdream-mobile-v2.1.1
           path: public/einsdream-mobile.apk
           retention-days: 30
