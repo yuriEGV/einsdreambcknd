@@ -1,34 +1,51 @@
-import React, { useState, useEffect, useRef } from 'react';
+/**
+ * RecordingScreen.js - EinsDream Mobile v2.1.0
+ *
+ * ARQUITECTURA DE GRABACIÓN:
+ * - Modo Nocturno Local: Grabación continua en segmentos de 30s.
+ *   Cada segmento se guarda en FileSystem.documentDirectory como
+ *   "night_YYYYMMDD_HH_seg00X.m4a" y aparece inmediatamente en la lista.
+ *
+ * - Auto-Agent (Nube): VAD silencioso. Graba chunk de 8s, guarda local
+ *   (auto_event_TIMESTAMP.m4a) y sube a la nube sin ninguna alerta.
+ *
+ * - Prueba rápida: 5 segundos, se guarda y se reproduce automáticamente.
+ *
+ * UBICACIÓN FÍSICA en el teléfono:
+ *   Android: /data/data/host.exp.exponent/files/  (interno, privado)
+ *   Accesible desde la app siempre. No requiere permisos de almacenamiento externo.
+ */
+
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     View,
     Text,
-    Button,
     StyleSheet,
     Alert,
     Platform,
     ScrollView,
     TouchableOpacity,
-    ActivityIndicator
+    ActivityIndicator,
+    Button,
 } from 'react-native';
 import { Audio } from 'expo-av';
-import axios from 'axios';
 import * as FileSystem from 'expo-file-system';
-import { Buffer } from 'buffer';
+import axios from 'axios';
 import CONFIG from '../config';
-import { checkHealthPermissions, requestHealthPermissions, readNightHealthMetrics } from '../services/healthConnect';
-import { processNightEngineCorrelation } from '../services/nightEngine';
 
-const { API_URL, BASE_URL = 'https://einsdreambcknd.vercel.app' } = CONFIG;
+const { API_URL, BASE_URL } = CONFIG;
+const FULL_BASE_URL = BASE_URL || 'https://einsdreambcknd.vercel.app';
 
-// Universal Mono AAC 44.1kHz preset: 100% compatible with Huawei / EMUI and web audio
-const MONO_RECORDING_OPTIONS = {
+// ─── Recording Quality ────────────────────────────────────────────────────────
+// Mono AAC MPEG-4: máxima compatibilidad Huawei / EMUI, reproduce en web
+const RECORDING_OPTIONS = {
     isMeteringEnabled: true,
     android: {
         extension: '.m4a',
         outputFormat: Audio.AndroidOutputFormat.MPEG_4,
         audioEncoder: Audio.AndroidAudioEncoder.AAC,
         sampleRate: 44100,
-        numberOfChannels: 1, // Mono: Works on all single-mic devices
+        numberOfChannels: 1,
         bitRate: 96000,
     },
     ios: {
@@ -39,66 +56,210 @@ const MONO_RECORDING_OPTIONS = {
         numberOfChannels: 1,
         bitRate: 96000,
     },
-    web: {
-        mimeType: 'audio/mp4',
-        bitsPerSecond: 96000,
-    }
+    web: { mimeType: 'audio/mp4', bitsPerSecond: 96000 },
 };
 
+// Segmento nocturno en segundos. 30s es el equilibrio óptimo:
+// - Evita que Android mate el proceso de MediaRecorder (que ocurre con grabaciones largas)
+// - Genera archivos manejables de ~350 KB por segmento
+const NIGHT_SEGMENT_SECONDS = 30;
+const AUTO_CHUNK_SECONDS = 8;
+const NOISE_THRESHOLD_DB = -35;
+
+// ─── Helper ───────────────────────────────────────────────────────────────────
+const fmtTime = (totalSecs) => {
+    const h = Math.floor(totalSecs / 3600);
+    const m = Math.floor((totalSecs % 3600) / 60);
+    const s = totalSecs % 60;
+    return h > 0
+        ? `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+        : `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+};
+
+const fmtMs = (ms) => {
+    if (!ms || ms < 0) return '0:00';
+    return fmtTime(Math.floor(ms / 1000));
+};
+
+const friendlyDate = (filename) => {
+    // night_20260903_22_seg001.m4a → Noche 03 sep 22:XX seg 1
+    const nightMatch = filename.match(/night_(\d{4})(\d{2})(\d{2})_(\d{2})_seg(\d+)/);
+    if (nightMatch) {
+        const [, , mm, dd, hh, seg] = nightMatch;
+        return `Noche ${dd}/${mm} ${hh}:xx · seg ${parseInt(seg)}`;
+    }
+    // auto_event_1725408000000.m4a
+    const autoMatch = filename.match(/auto_event_(\d+)/);
+    if (autoMatch) {
+        const d = new Date(parseInt(autoMatch[1]));
+        return `Auto ${d.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
+    }
+    // manual_record_1725408000000.m4a (prueba / legado)
+    const manualMatch = filename.match(/manual_record_(\d+)/);
+    if (manualMatch) {
+        const d = new Date(parseInt(manualMatch[1]));
+        return `Prueba ${d.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })}`;
+    }
+    return filename;
+};
+
+// ─── Component ────────────────────────────────────────────────────────────────
 export default function RecordingScreen({ token, onLogout }) {
-    const [hasPermission, setHasPermission] = useState(false);
-    const [isAutoAgentRunning, setIsAutoAgentRunning] = useState(false);
-    const [isManualRecording, setIsManualRecording] = useState(false);
-    const [manualSeconds, setManualSeconds] = useState(0);
-
-    // Dedicated Quick Test State
-    const [isTesting, setIsTesting] = useState(false);
-    const [testSecondsLeft, setTestSecondsLeft] = useState(5);
-    const testRecordingRef = useRef(null);
-    const testIntervalRef = useRef(null);
-
-    // Google Health Connect State
-    const [healthStatus, setHealthStatus] = useState({
-        connected: false,
-        checking: false,
-        heartRate: false,
-        sleep: false,
-        respiratoryRate: false,
-        oxygenSaturation: false
-    });
-    const sessionStartTimeRef = useRef(null);
-    const nightAudioEventsRef = useRef([]);
-
-    // For Auto-Agent
-    const [isAutoRecording, setIsAutoRecording] = useState(false);
-    const [meteringValue, setMeteringValue] = useState(-160);
-    const [recordedEventsCount, setRecordedEventsCount] = useState(0);
-
-    // Local Recordings Player State
+    // ── State ────────────────────────────────────────────────────────────────
     const [localRecordings, setLocalRecordings] = useState([]);
-    const [isLoadingRecordings, setIsLoadingRecordings] = useState(false);
-    const [soundObject, setSoundObject] = useState(null);
+    const [loadingRecs, setLoadingRecs] = useState(false);
+
+    const [nightActive, setNightActive] = useState(false);
+    const [nightSeconds, setNightSeconds] = useState(0);
+    const [nightSegmentCount, setNightSegmentCount] = useState(0);
+
+    const [autoActive, setAutoActive] = useState(false);
+    const [autoRecording, setAutoRecording] = useState(false);
+    const [autoEventCount, setAutoEventCount] = useState(0);
+    const [meteringDb, setMeteringDb] = useState(-160);
+
+    const [isTesting, setIsTesting] = useState(false);
+    const [testCountdown, setTestCountdown] = useState(5);
+
     const [playingUri, setPlayingUri] = useState(null);
-    const [isPlaying, setIsPlaying] = useState(false);
-    const [playbackMillis, setPlaybackMillis] = useState(0);
-    const [durationMillis, setDurationMillis] = useState(0);
+    const [playing, setPlaying] = useState(false);
+    const [posMs, setPosMs] = useState(0);
+    const [durMs, setDurMs] = useState(0);
+    const [uploadingId, setUploadingId] = useState(null);
+    const [uploadedIds, setUploadedIds] = useState(new Set());
 
-    // Refs for safe background operation
-    const isAutoAgentActiveRef = useRef(false);
-    const isCapturingChunkRef = useRef(false);
-    const backgroundListenerRef = useRef(null);
-    const autoRecordingRef = useRef(null);
-    const manualRecordingRef = useRef(null);
-    const manualTimerRef = useRef(null);
+    // ── Refs (survive re-renders, safe for async callbacks) ─────────────────
+    const nightActiveRef = useRef(false);
+    const autoActiveRef = useRef(false);
+    const isCapturingRef = useRef(false);
 
-    // VAD Configuration for Cloud
-    const NOISE_THRESHOLD = -35;
-    const CHUNK_DURATION_MS = 8000;
+    const nightRecRef = useRef(null);       // current segment recording
+    const nightTimerRef = useRef(null);     // countdown interval
+    const nightSegTimerRef = useRef(null);  // segment boundary timeout
+    const nightDateRef = useRef('');        // YYYYMMDD_HH for filename
+    const nightSegRef = useRef(0);          // segment counter
 
+    const autoListenerRef = useRef(null);   // VAD recording
+    const autoRecRef = useRef(null);        // chunk recording
+
+    const testRecRef = useRef(null);
+    const testTimerRef = useRef(null);
+
+    const soundRef = useRef(null);
+
+    // ── Initial setup ────────────────────────────────────────────────────────
     useEffect(() => {
-        (async () => {
-            const { status } = await Audio.requestPermissionsAsync();
-            setHasPermission(status === 'granted');
+        requestMicPermission();
+        refreshRecordings();
+        return () => { stopAll(); unloadSound(); };
+    }, []);
+
+    const requestMicPermission = async () => {
+        await Audio.requestPermissionsAsync();
+        await Audio.setAudioModeAsync({
+            allowsRecordingIOS: true,
+            playsInSilentModeIOS: true,
+            staysActiveInBackground: true,
+            shouldDuckAndroid: true,
+            playThroughEarpieceAndroid: false,
+        });
+    };
+
+    // ── Recordings list ──────────────────────────────────────────────────────
+    const refreshRecordings = useCallback(async () => {
+        setLoadingRecs(true);
+        try {
+            const dir = FileSystem.documentDirectory;
+            const allFiles = await FileSystem.readDirectoryAsync(dir);
+            const audioFiles = [];
+
+            for (const filename of allFiles) {
+                if (!filename.endsWith('.m4a') && !filename.endsWith('.mp3')) continue;
+                const uri = dir + filename;
+                const info = await FileSystem.getInfoAsync(uri, { size: true });
+                if (!info.exists) continue;
+
+                const sizeMb = info.size ? (info.size / (1024 * 1024)).toFixed(2) : '?';
+                const label = friendlyDate(filename);
+
+                audioFiles.push({
+                    id: filename,
+                    filename,
+                    uri,
+                    label,
+                    sizeMb,
+                    modTime: info.modificationTime || 0,
+                    size: info.size || 0,
+                });
+            }
+
+            audioFiles.sort((a, b) => b.modTime - a.modTime);
+            setLocalRecordings(audioFiles);
+        } catch (err) {
+            console.warn('[refreshRecordings]', err.message);
+        } finally {
+            setLoadingRecs(false);
+        }
+    }, []);
+
+    // ── Player ───────────────────────────────────────────────────────────────
+    const unloadSound = async () => {
+        if (soundRef.current) {
+            try {
+                await soundRef.current.stopAsync();
+                await soundRef.current.unloadAsync();
+            } catch (_) {}
+            soundRef.current = null;
+        }
+        setPlayingUri(null);
+        setPlaying(false);
+        setPosMs(0);
+        setDurMs(0);
+    };
+
+    const handlePlayPause = async (rec) => {
+        try {
+            // Switch track
+            if (playingUri !== rec.uri) {
+                await unloadSound();
+                // Switch audio mode to playback
+                await Audio.setAudioModeAsync({
+                    allowsRecordingIOS: false,
+                    playsInSilentModeIOS: true,
+                    staysActiveInBackground: false,
+                    shouldDuckAndroid: false,
+                    playThroughEarpieceAndroid: false,
+                });
+                const { sound } = await Audio.Sound.createAsync(
+                    { uri: rec.uri },
+                    { shouldPlay: true, progressUpdateIntervalMillis: 300 },
+                    (status) => {
+                        if (status.isLoaded) {
+                            setPosMs(status.positionMillis || 0);
+                            setDurMs(status.durationMillis || 0);
+                            setPlaying(status.isPlaying);
+                            if (status.didJustFinish) { setPosMs(0); setPlaying(false); }
+                        }
+                    }
+                );
+                soundRef.current = sound;
+                setPlayingUri(rec.uri);
+                setPlaying(true);
+                return;
+            }
+            // Toggle same track
+            if (playing) {
+                await soundRef.current?.pauseAsync();
+                setPlaying(false);
+            } else {
+                await soundRef.current?.playAsync();
+                setPlaying(true);
+            }
+        } catch (err) {
+            console.warn('[handlePlayPause]', err.message);
+            Alert.alert('Error al reproducir', err.message);
+        } finally {
+            // Restore recording mode
             await Audio.setAudioModeAsync({
                 allowsRecordingIOS: true,
                 playsInSilentModeIOS: true,
@@ -106,782 +267,561 @@ export default function RecordingScreen({ token, onLogout }) {
                 shouldDuckAndroid: true,
                 playThroughEarpieceAndroid: false,
             });
-            await loadLocalRecordings();
+        }
+    };
 
-            // Check Health Connect availability & permissions
-            try {
-                const health = await checkHealthPermissions();
-                setHealthStatus({
-                    connected: health.granted,
-                    checking: false,
-                    heartRate: health.permissions.heartRate || false,
-                    sleep: health.permissions.sleep || false,
-                    respiratoryRate: health.permissions.respiratoryRate || false,
-                    oxygenSaturation: health.permissions.oxygenSaturation || false
-                });
-            } catch (e) {
-                console.warn('Health Connect init notice:', e);
+    const handleDelete = async (rec) => {
+        Alert.alert('Eliminar grabación', `¿Eliminar ${rec.label}?`, [
+            { text: 'Cancelar', style: 'cancel' },
+            {
+                text: 'Eliminar', style: 'destructive',
+                onPress: async () => {
+                    if (playingUri === rec.uri) await unloadSound();
+                    await FileSystem.deleteAsync(rec.uri, { idempotent: true }).catch(() => {});
+                    refreshRecordings();
+                }
             }
-        })();
-        return () => {
-            stopAll();
-            unloadCurrentSound();
-        };
-    }, []);
-
-    const unloadCurrentSound = async () => {
-        if (soundObject) {
-            try {
-                await soundObject.stopAsync();
-                await soundObject.unloadAsync();
-            } catch (e) {}
-            setSoundObject(null);
-            setPlayingUri(null);
-            setIsPlaying(false);
-        }
+        ]);
     };
 
-    const stopAll = async () => {
-        if (manualTimerRef.current) {
-            clearInterval(manualTimerRef.current);
-            manualTimerRef.current = null;
-        }
-        if (testIntervalRef.current) {
-            clearInterval(testIntervalRef.current);
-            testIntervalRef.current = null;
-        }
-        if (isAutoAgentActiveRef.current) await stopAutoAgent();
-        if (isManualRecording) await stopManualRecording();
-    };
-
-    // ==========================================
-    // HEALTH CONNECT CONNECTION HANDLER
-    // ==========================================
-    const handleConnectHealth = async () => {
+    // ── Cloud Upload ─────────────────────────────────────────────────────────
+    const uploadToCloud = async (fileUri, filename, eventType = 'auto-agent') => {
         try {
-            setHealthStatus(s => ({ ...s, checking: true }));
-            const res = await requestHealthPermissions();
-            setHealthStatus({
-                connected: res.granted,
-                checking: false,
-                heartRate: res.permissions.heartRate || false,
-                sleep: res.permissions.sleep || false,
-                respiratoryRate: res.permissions.respiratoryRate || false,
-                oxygenSaturation: res.permissions.oxygenSaturation || false
+            // Read base64 from local file
+            const b64 = await FileSystem.readAsStringAsync(fileUri, {
+                encoding: FileSystem.EncodingType.Base64
             });
-            Alert.alert(
-                'Health Connect Conectado',
-                'EinsDream ahora recopilará tus métricas de pulso, sueño, respiración y SpO2 para correlacionarlas con el audio nocturno.'
+            const audioBase64 = `data:audio/m4a;base64,${b64}`;
+
+            // Get upload token/endpoint from backend
+            const initRes = await axios.post(`${API_URL}/upload/init`,
+                { filename, contentType: 'audio/m4a' },
+                { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 }
             );
-        } catch (e) {
-            setHealthStatus(s => ({ ...s, checking: false }));
-            Alert.alert('Health Connect', e.message || 'No se pudo conectar a Health Connect.');
-        }
-    };
 
-    // ==========================================
-    // LOCAL RECORDINGS LIBRARY & PLAYER
-    // ==========================================
-    const loadLocalRecordings = async () => {
-        setIsLoadingRecordings(true);
-        try {
-            const dir = FileSystem.documentDirectory;
-            if (!dir) return;
-            const files = await FileSystem.readDirectoryAsync(dir);
-            const audioFiles = [];
+            const { url, fileKey, provider } = initRes.data;
 
-            for (const file of files) {
-                if (file.endsWith('.m4a') || file.endsWith('.mp3')) {
-                    const fileUri = dir + file;
-                    const info = await FileSystem.getInfoAsync(fileUri);
-                    const sizeMb = info.size ? (info.size / (1024 * 1024)).toFixed(1) : '0.1';
-                    
-                    let dateStr = 'Grabación nocturna';
-                    if (file.startsWith('manual_record_')) {
-                        const ts = parseInt(file.replace('manual_record_', '').replace('.m4a', ''));
-                        if (!isNaN(ts)) {
-                            const d = new Date(ts);
-                            dateStr = 'Noche ' + d.toLocaleDateString('es-CL', {
-                                day: '2-digit',
-                                month: 'short',
-                                hour: '2-digit',
-                                minute: '2-digit'
-                            });
-                        }
-                    } else if (file.startsWith('auto_event_')) {
-                        const ts = parseInt(file.replace('auto_event_', '').replace('.m4a', ''));
-                        if (!isNaN(ts)) {
-                            const d = new Date(ts);
-                            dateStr = 'Evento ' + d.toLocaleTimeString('es-CL', {
-                                hour: '2-digit',
-                                minute: '2-digit',
-                                second: '2-digit'
-                            });
-                        }
-                    }
-
-                    audioFiles.push({
-                        filename: file,
-                        uri: fileUri,
-                        sizeStr: `${sizeMb} MB`,
-                        dateStr,
-                        modTime: info.modificationTime || 0
-                    });
-                }
+            if (provider === 'local') {
+                // For Vercel serverless: send as multipart + base64 payload
+                const formData = new FormData();
+                formData.append('audio', {
+                    uri: fileUri,
+                    name: filename,
+                    type: 'audio/m4a',
+                });
+                const uploadRes = await axios.post(
+                    url.startsWith('http') ? url : `${FULL_BASE_URL}${url}`,
+                    formData,
+                    { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'multipart/form-data' }, timeout: 30000 }
+                );
+                const finalKey = uploadRes.data.fileKey || fileKey;
+                await axios.post(`${API_URL}/upload/metadata`, {
+                    s3Key: finalKey,
+                    audioBase64,
+                    duration: eventType === 'auto-agent' ? AUTO_CHUNK_SECONDS : NIGHT_SEGMENT_SECONDS,
+                    deviceModel: Platform.OS === 'android' ? 'android' : 'ios',
+                    eventType,
+                }, { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 });
+            } else {
+                // S3/GCS: PUT raw bytes then save metadata
+                const endpoint = url.startsWith('http') ? url : `${FULL_BASE_URL}${url}`;
+                await fetch(endpoint, {
+                    method: initRes.data.uploadMethod || 'PUT',
+                    headers: { 'Content-Type': 'audio/m4a' },
+                    body: Uint8Array.from(atob(b64), c => c.charCodeAt(0)),
+                });
+                await axios.post(`${API_URL}/upload/metadata`, {
+                    s3Key: fileKey,
+                    audioBase64,
+                    duration: eventType === 'auto-agent' ? AUTO_CHUNK_SECONDS : NIGHT_SEGMENT_SECONDS,
+                    deviceModel: Platform.OS === 'android' ? 'android' : 'ios',
+                    eventType,
+                }, { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 });
             }
 
-            audioFiles.sort((a, b) => b.modTime - a.modTime);
-            setLocalRecordings(audioFiles);
+            return true;
         } catch (err) {
-            console.warn('Error loading recordings:', err);
-        } finally {
-            setIsLoadingRecordings(false);
+            console.warn(`[uploadToCloud] ${filename}:`, err.message);
+            return false;
         }
     };
 
-    const handlePlayPause = async (rec) => {
+    const handleManualUpload = async (rec) => {
+        if (uploadingId === rec.id || uploadedIds.has(rec.id)) return;
+        setUploadingId(rec.id);
+        const ok = await uploadToCloud(rec.uri, rec.filename, 'manual');
+        setUploadingId(null);
+        if (ok) {
+            setUploadedIds(prev => new Set([...prev, rec.id]));
+            Alert.alert('✅ Subido a la nube', `${rec.label} está ahora disponible en el Dashboard web.`);
+        } else {
+            Alert.alert('Error de subida', 'No se pudo subir. Comprueba la conexión e intenta de nuevo.');
+        }
+    };
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // MODO 1: GRABACIÓN NOCTURNA CONTINUA (segmentada c/30s)
+    // ═══════════════════════════════════════════════════════════════════════
+    const startNightRecording = async () => {
+        const perm = await Audio.requestPermissionsAsync();
+        if (perm.status !== 'granted') {
+            Alert.alert('Sin permiso de micrófono', 'Ve a Ajustes → Apps → EinsDream → Permisos y activa el micrófono.');
+            return;
+        }
+        if (autoActiveRef.current) await stopAutoAgent();
+        await unloadSound();
+
+        nightActiveRef.current = true;
+        nightSegRef.current = 0;
+        setNightActive(true);
+        setNightSeconds(0);
+        setNightSegmentCount(0);
+
+        // Timestamp for filename prefix  e.g. 20260903_22
+        const now = new Date();
+        nightDateRef.current = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}`;
+
+        // Wall-clock counter
+        nightTimerRef.current = setInterval(() => setNightSeconds(s => s + 1), 1000);
+
+        recordNightSegment();
+    };
+
+    const recordNightSegment = async () => {
+        if (!nightActiveRef.current) return;
+
         try {
-            if (playingUri === rec.uri) {
-                if (isPlaying && soundObject) {
-                    await soundObject.pauseAsync();
-                    setIsPlaying(false);
-                } else if (!isPlaying && soundObject) {
-                    await soundObject.playAsync();
-                    setIsPlaying(true);
-                }
+            // Ensure recording mode
+            await Audio.setAudioModeAsync({
+                allowsRecordingIOS: true,
+                playsInSilentModeIOS: true,
+                staysActiveInBackground: true,
+                shouldDuckAndroid: true,
+                playThroughEarpieceAndroid: false,
+            });
+
+            const { recording } = await Audio.Recording.createAsync(RECORDING_OPTIONS);
+            nightRecRef.current = recording;
+
+            // After NIGHT_SEGMENT_SECONDS, stop and immediately start the next segment
+            nightSegTimerRef.current = setTimeout(async () => {
+                if (!nightActiveRef.current) return;
+                await finishNightSegment(false);
+            }, NIGHT_SEGMENT_SECONDS * 1000);
+        } catch (err) {
+            console.warn('[recordNightSegment] start error:', err.message);
+            if (nightActiveRef.current) {
+                // Retry after 1 second
+                setTimeout(() => recordNightSegment(), 1000);
+            }
+        }
+    };
+
+    const finishNightSegment = async (isFinalStop) => {
+        if (nightSegTimerRef.current) { clearTimeout(nightSegTimerRef.current); nightSegTimerRef.current = null; }
+        const rec = nightRecRef.current;
+        nightRecRef.current = null;
+        if (!rec) return;
+
+        try {
+            await rec.stopAndUnloadAsync();
+            const tempUri = rec.getURI();
+            if (!tempUri) {
+                console.warn('[finishNightSegment] getURI returned null');
+                if (!isFinalStop && nightActiveRef.current) recordNightSegment();
                 return;
             }
 
-            await unloadCurrentSound();
+            nightSegRef.current += 1;
+            const segNum = String(nightSegRef.current).padStart(3, '0');
+            const destFilename = `night_${nightDateRef.current}_seg${segNum}.m4a`;
+            const destUri = FileSystem.documentDirectory + destFilename;
 
-            const { sound } = await Audio.Sound.createAsync(
-                { uri: rec.uri },
-                { shouldPlay: true },
-                (status) => {
-                    if (status.isLoaded) {
-                        setPlaybackMillis(status.positionMillis || 0);
-                        setDurationMillis(status.durationMillis || 0);
-                        setIsPlaying(status.isPlaying);
-                        if (status.didJustFinish) {
-                            setIsPlaying(false);
-                            setPlaybackMillis(0);
-                        }
-                    }
-                }
-            );
+            // Copy to permanent location
+            await FileSystem.copyAsync({ from: tempUri, to: destUri });
 
-            setSoundObject(sound);
-            setPlayingUri(rec.uri);
-            setIsPlaying(true);
+            // Update list immediately
+            setNightSegmentCount(nightSegRef.current);
+            refreshRecordings();  // non-blocking, will update state when done
+
+            // Silent background upload (don't await - never blocks the next segment)
+            uploadToCloud(destUri, destFilename, 'auto-agent').then((ok) => {
+                if (ok) console.log(`[night] segment ${segNum} uploaded`);
+            });
+
+            if (!isFinalStop && nightActiveRef.current) {
+                recordNightSegment();
+            }
         } catch (err) {
-            console.error('Play error:', err);
-            Alert.alert('Error al reproducir', 'No se pudo reproducir este archivo de audio.');
+            console.warn('[finishNightSegment] error:', err.message);
+            if (!isFinalStop && nightActiveRef.current) {
+                setTimeout(() => recordNightSegment(), 500);
+            }
         }
     };
 
-    const handleDeleteRecording = (rec) => {
+    const stopNightRecording = async () => {
+        nightActiveRef.current = false;
+        setNightActive(false);
+        if (nightTimerRef.current) { clearInterval(nightTimerRef.current); nightTimerRef.current = null; }
+        await finishNightSegment(true);
+        await refreshRecordings();
         Alert.alert(
-            'Eliminar Grabación',
-            `¿Seguro que deseas eliminar ${rec.dateStr}?`,
-            [
-                { text: 'Cancelar', style: 'cancel' },
-                {
-                    text: 'Eliminar',
-                    style: 'destructive',
-                    onPress: async () => {
-                        if (playingUri === rec.uri) {
-                            await unloadCurrentSound();
-                        }
-                        await FileSystem.deleteAsync(rec.uri, { idempotent: true }).catch(() => {});
-                        await loadLocalRecordings();
-                    }
-                }
-            ]
+            '✅ Noche guardada',
+            `Se guardaron ${nightSegRef.current} segmentos de audio en tu teléfono.\n\n` +
+            `Los archivos están en la lista "🎧 Mis Grabaciones" abajo.\n\n` +
+            `Cada segmento también se subió silenciosamente al Dashboard web.`
         );
     };
 
-    const formatTime = (ms) => {
-        if (!ms || ms < 0) return '00:00';
-        const totalSecs = Math.floor(ms / 1000);
-        const mins = Math.floor(totalSecs / 60);
-        const secs = totalSecs % 60;
-        return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-    };
-
-    const formatSeconds = (totalSecs) => {
-        const hours = Math.floor(totalSecs / 3600);
-        const mins = Math.floor((totalSecs % 3600) / 60);
-        const secs = totalSecs % 60;
-        if (hours > 0) {
-            return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-        }
-        return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-    };
-
-    // ==========================================
-    // 1. AUTO-AGENT CONTINUOUS NOISE MONITOR (SILENT & PERPETUAL)
-    // ==========================================
+    // ═══════════════════════════════════════════════════════════════════════
+    // MODO 2: AUTO-AGENT (VAD silencioso + chunk 8s a la nube)
+    // ═══════════════════════════════════════════════════════════════════════
     const startAutoAgent = async () => {
-        const p = await Audio.requestPermissionsAsync();
-        if (p.status !== 'granted') return Alert.alert('Permiso Denegado', 'Se necesita acceso al micrófono para monitorear el sueño.');
-        
-        if (manualRecordingRef.current) {
-            try { await manualRecordingRef.current.stopAndUnloadAsync(); } catch (e) {}
-            manualRecordingRef.current = null;
+        const perm = await Audio.requestPermissionsAsync();
+        if (perm.status !== 'granted') {
+            Alert.alert('Sin permiso de micrófono', 'Activa el micrófono en los ajustes del sistema.');
+            return;
         }
-        setIsManualRecording(false);
-        await unloadCurrentSound();
+        if (nightActiveRef.current) await stopNightRecording();
+        await unloadSound();
 
-        isAutoAgentActiveRef.current = true;
-        isCapturingChunkRef.current = false;
-        setIsAutoAgentRunning(true);
-        setRecordedEventsCount(0);
+        autoActiveRef.current = true;
+        isCapturingRef.current = false;
+        setAutoActive(true);
+        setAutoEventCount(0);
+        setMeteringDb(-160);
 
-        startPerpetualListener();
+        listenForNoise();
     };
 
-    const startPerpetualListener = async () => {
-        if (!isAutoAgentActiveRef.current) return;
-
+    const listenForNoise = async () => {
+        if (!autoActiveRef.current) return;
         try {
             await Audio.setAudioModeAsync({
                 allowsRecordingIOS: true,
                 playsInSilentModeIOS: true,
                 staysActiveInBackground: true,
                 shouldDuckAndroid: true,
-                playThroughEarpieceAndroid: false
+                playThroughEarpieceAndroid: false,
             });
 
-            // Clean up any stale recording
-            if (backgroundListenerRef.current) {
-                try { await backgroundListenerRef.current.stopAndUnloadAsync(); } catch (e) {}
-                backgroundListenerRef.current = null;
+            if (autoListenerRef.current) {
+                try { await autoListenerRef.current.stopAndUnloadAsync(); } catch (_) {}
+                autoListenerRef.current = null;
             }
 
             const { recording } = await Audio.Recording.createAsync(
-                MONO_RECORDING_OPTIONS,
+                RECORDING_OPTIONS,
                 (status) => {
                     if (status.metering !== undefined) {
-                        setMeteringValue(Math.round(status.metering));
-                        if (status.metering > NOISE_THRESHOLD && !isCapturingChunkRef.current && isAutoAgentActiveRef.current) {
-                            captureNoiseEventChunk();
+                        setMeteringDb(Math.round(status.metering));
+                        if (status.metering > NOISE_THRESHOLD_DB && !isCapturingRef.current && autoActiveRef.current) {
+                            captureAutoChunk();
                         }
                     }
                 },
-                400
+                500
             );
-            backgroundListenerRef.current = recording;
+            autoListenerRef.current = recording;
         } catch (err) {
-            console.warn('Listener loop retry notice:', err.message);
-            if (isAutoAgentActiveRef.current) {
-                setTimeout(() => startPerpetualListener(), 1500);
-            }
+            console.warn('[listenForNoise] retry:', err.message);
+            if (autoActiveRef.current) setTimeout(() => listenForNoise(), 1500);
         }
     };
 
-    const captureNoiseEventChunk = async () => {
-        if (isCapturingChunkRef.current || !isAutoAgentActiveRef.current) return;
-        isCapturingChunkRef.current = true;
-        setIsAutoRecording(true);
+    const captureAutoChunk = async () => {
+        if (isCapturingRef.current || !autoActiveRef.current) return;
+        isCapturingRef.current = true;
+        setAutoRecording(true);
 
-        try {
-            // Let it record for CHUNK_DURATION_MS to capture the entire snore/noise
-            await new Promise(resolve => setTimeout(resolve, CHUNK_DURATION_MS));
+        // Let the current VAD recording capture the event for AUTO_CHUNK_SECONDS
+        await new Promise(r => setTimeout(r, AUTO_CHUNK_SECONDS * 1000));
+        if (!autoActiveRef.current) { isCapturingRef.current = false; setAutoRecording(false); return; }
 
-            if (!isAutoAgentActiveRef.current) return;
+        // Grab what was recorded by the VAD listener
+        const rec = autoListenerRef.current;
+        autoListenerRef.current = null;
+        let savedOk = false;
 
-            const recording = backgroundListenerRef.current;
-            backgroundListenerRef.current = null;
-
-            if (recording) {
-                await recording.stopAndUnloadAsync();
-                const uri = recording.getURI();
-
-                if (uri) {
-                    // 1. SAVE LOCALLY IMMEDIATELY so it shows up in phone's "Mis Grabaciones"
-                    const localFilename = `auto_event_${Date.now()}.m4a`;
-                    const localPath = FileSystem.documentDirectory + localFilename;
-                    await FileSystem.copyAsync({ from: uri, to: localPath }).catch(() => {});
-                    loadLocalRecordings();
-                    setRecordedEventsCount(c => c + 1);
-
-                    // 2. UPLOAD QUIETLY IN BACKGROUND (No popup alert to wake up user!)
-                    silentCloudUpload(localPath, localFilename);
+        if (rec) {
+            try {
+                await rec.stopAndUnloadAsync();
+                const tempUri = rec.getURI();
+                if (tempUri) {
+                    const ts = Date.now();
+                    const filename = `auto_event_${ts}.m4a`;
+                    const destUri = FileSystem.documentDirectory + filename;
+                    await FileSystem.copyAsync({ from: tempUri, to: destUri });
+                    savedOk = true;
+                    setAutoEventCount(c => c + 1);
+                    refreshRecordings();
+                    // Upload in background
+                    uploadToCloud(destUri, filename, 'auto-agent').then(ok => {
+                        if (ok) console.log('[auto] event uploaded:', filename);
+                    });
                 }
-            }
-        } catch (err) {
-            console.warn('Error capturing noise chunk:', err.message);
-        } finally {
-            isCapturingChunkRef.current = false;
-            setIsAutoRecording(false);
-            // Immediately resume listening perpetually
-            if (isAutoAgentActiveRef.current) {
-                startPerpetualListener();
+            } catch (err) {
+                console.warn('[captureAutoChunk] save/upload error:', err.message);
             }
         }
+
+        isCapturingRef.current = false;
+        setAutoRecording(false);
+        // Resume listening
+        if (autoActiveRef.current) listenForNoise();
     };
 
     const stopAutoAgent = async () => {
-        isAutoAgentActiveRef.current = false;
-        isCapturingChunkRef.current = false;
-        setIsAutoAgentRunning(false);
-        setIsAutoRecording(false);
-        setMeteringValue(-160);
-
-        if (backgroundListenerRef.current) {
-            try { await backgroundListenerRef.current.stopAndUnloadAsync(); } catch (e) {}
-            backgroundListenerRef.current = null;
+        autoActiveRef.current = false;
+        isCapturingRef.current = false;
+        setAutoActive(false);
+        setAutoRecording(false);
+        setMeteringDb(-160);
+        if (autoListenerRef.current) {
+            try { await autoListenerRef.current.stopAndUnloadAsync(); } catch (_) {}
+            autoListenerRef.current = null;
         }
     };
 
-    const silentCloudUpload = async (localUri, filename) => {
-        try {
-            const contentType = 'audio/m4a';
-
-            // Read base64 directly from device storage for permanent MongoDB persistence
-            let base64Payload = null;
-            try {
-                const b64 = await FileSystem.readAsStringAsync(localUri, { encoding: FileSystem.EncodingType.Base64 });
-                base64Payload = `data:audio/m4a;base64,${b64}`;
-            } catch (e) {
-                console.warn('Could not read local base64:', e.message);
-            }
-
-            const initRes = await axios.post(`${API_URL}/upload/init`,
-                { filename, contentType },
-                { headers: { Authorization: `Bearer ${token}` } }
-            );
-
-            const { uploadMethod, url, fileKey, provider } = initRes.data;
-
-            const uploadEndpoint = url.startsWith('http')
-                ? url
-                : url.startsWith('/api')
-                    ? `${BASE_URL}${url}`
-                    : `${API_URL}/${url}`;
-
-            if (provider === 'local') {
-                const formData = new FormData();
-                formData.append('audio', {
-                    uri: Platform.OS === 'android' ? localUri : localUri.replace('file://', ''),
-                    name: filename,
-                    type: contentType,
-                });
-                const localRes = await axios.post(uploadEndpoint, formData, {
-                    headers: {
-                        Authorization: `Bearer ${token}`,
-                        'Content-Type': 'multipart/form-data',
-                    },
-                });
-                const finalBase64 = base64Payload || localRes.data.fileData;
-                await axios.post(`${API_URL}/upload/metadata`, {
-                    s3Key: localRes.data.fileKey || fileKey,
-                    audioBase64: finalBase64,
-                    duration: 8,
-                    deviceModel: Platform.OS,
-                    eventType: 'auto-agent'
-                }, { headers: { Authorization: `Bearer ${token}` } });
-            } else {
-                const audioData = await FileSystem.readAsStringAsync(localUri, { encoding: FileSystem.EncodingType.Base64 });
-                await fetch(uploadEndpoint, { method: uploadMethod || 'PUT', headers: { 'Content-Type': contentType }, body: Buffer.from(audioData, 'base64') });
-                await axios.post(`${API_URL}/upload/metadata`, {
-                    s3Key: fileKey,
-                    audioBase64: base64Payload,
-                    duration: 8,
-                    deviceModel: Platform.OS,
-                    eventType: 'auto-agent'
-                }, { headers: { Authorization: `Bearer ${token}` } });
-            }
-
-            console.log('Silent background upload completed for:', filename);
-        } catch (err) {
-            console.warn('Silent upload notice (queued locally):', err.message);
-        }
-    };
-
-    // ==========================================
-    // 2. MANUAL CONTINUOUS ALL-NIGHT RECORDING (NO INTERRUPTIONS)
-    // ==========================================
-    const startManualRecording = async () => {
-        const p = await Audio.requestPermissionsAsync();
-        if (p.status !== 'granted') {
-            return Alert.alert('Permiso Denegado', 'Se necesita acceso al micrófono para grabar.');
-        }
-
-        if (isAutoAgentActiveRef.current) {
-            await stopAutoAgent();
-        }
-
-        if (manualRecordingRef.current) {
-            try {
-                await manualRecordingRef.current.stopAndUnloadAsync();
-            } catch (e) {}
-            manualRecordingRef.current = null;
-        }
-
-        try {
-            await Audio.setAudioModeAsync({
-                allowsRecordingIOS: true,
-                playsInSilentModeIOS: true,
-                staysActiveInBackground: true,
-                shouldDuckAndroid: true,
-                playThroughEarpieceAndroid: false
-            });
-
-            console.log('Starting uninterrupted all-night recording with Mono AAC...');
-            const { recording } = await Audio.Recording.createAsync(
-                MONO_RECORDING_OPTIONS
-            );
-
-            manualRecordingRef.current = recording;
-            sessionStartTimeRef.current = new Date();
-            nightAudioEventsRef.current = [];
-            setIsManualRecording(true);
-            setManualSeconds(0);
-
-            if (manualTimerRef.current) clearInterval(manualTimerRef.current);
-            manualTimerRef.current = setInterval(() => {
-                setManualSeconds(s => s + 1);
-            }, 1000);
-
-        } catch (err) {
-            console.error('Failed to start manual recording:', err);
-            setIsManualRecording(false);
-            Alert.alert('Error', 'No se pudo iniciar la grabación: ' + (err.message || 'Error del micrófono'));
-        }
-    };
-
-    const stopManualRecording = async () => {
-        if (manualTimerRef.current) {
-            clearInterval(manualTimerRef.current);
-            manualTimerRef.current = null;
-        }
-
-        const recording = manualRecordingRef.current;
-        manualRecordingRef.current = null;
-        setIsManualRecording(false);
-
-        if (!recording) {
-            return;
-        }
-
-        try {
-            console.log('Stopping continuous all-night recording...');
-            await recording.stopAndUnloadAsync();
-            const uri = recording.getURI();
-            const sessionEndTime = new Date();
-            const sessionStartTime = sessionStartTimeRef.current || new Date(sessionEndTime.getTime() - Math.max(10000, manualSeconds * 1000));
-
-            if (uri) {
-                const filename = `manual_record_${Date.now()}.m4a`;
-                const newPath = FileSystem.documentDirectory + filename;
-                await FileSystem.copyAsync({ from: uri, to: newPath });
-
-                await loadLocalRecordings();
-
-                // Night Engine Correlation with Health Connect
-                const healthData = await readNightHealthMetrics({
-                    startTime: sessionStartTime,
-                    endTime: sessionEndTime
-                });
-
-                const nightSessionPayload = processNightEngineCorrelation({
-                    audioEvents: [{
-                        timestamp: new Date(sessionStartTime.getTime() + Math.min(60000, manualSeconds * 500)),
-                        duration: manualSeconds,
-                        eventType: 'breathing',
-                        intensityDb: 55
-                    }],
-                    healthData,
-                    sessionWindow: {
-                        sessionDate: sessionEndTime.toISOString().slice(0, 10),
-                        startTime: sessionStartTime,
-                        endTime: sessionEndTime
-                    }
-                });
-
-                // Batch sync to MongoDB quietly
-                try {
-                    await axios.post(`${API_URL}/night-sessions`, nightSessionPayload, {
-                        headers: { Authorization: `Bearer ${token}` }
-                    });
-                    console.log('Night session successfully synchronized to MongoDB');
-                } catch (syncError) {
-                    console.warn('Sync notice:', syncError.response?.data || syncError.message);
-                }
-
-                Alert.alert(
-                    '✅ Noche Finalizada y Guardada',
-                    `Tu grabación de ${formatSeconds(manualSeconds)} está guardada en tu teléfono en "Mis Grabaciones" y lista para escuchar.`
-                );
-            }
-        } catch (err) {
-            console.error('Failed to stop manual recording:', err);
-            Alert.alert('Aviso', 'Se detuvo la grabación. Comprueba la lista de abajo.');
-            await loadLocalRecordings();
-        }
-    };
-
-    // ==========================================
-    // 3. DEDICATED QUICK TEST (5 SECONDS WITH VISUAL COUNTDOWN)
-    // ==========================================
-    const runQuickTestRecording = async () => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // MODO 3: PRUEBA RÁPIDA DE VOZ (5 SEGUNDOS)
+    // ═══════════════════════════════════════════════════════════════════════
+    const runVoiceTest = async () => {
         if (isTesting) return;
+        const perm = await Audio.requestPermissionsAsync();
+        if (perm.status !== 'granted') {
+            Alert.alert('Sin permiso de micrófono'); return;
+        }
+        if (nightActiveRef.current) await stopNightRecording();
+        if (autoActiveRef.current) await stopAutoAgent();
+        await unloadSound();
 
-        const p = await Audio.requestPermissionsAsync();
-        if (p.status !== 'granted') {
-            return Alert.alert('Permiso Denegado', 'Se necesita acceso al micrófono para realizar la prueba.');
-        }
-
-        // Stop any active recordings
-        if (manualRecordingRef.current) {
-            try { await manualRecordingRef.current.stopAndUnloadAsync(); } catch (e) {}
-            manualRecordingRef.current = null;
-        }
-        if (backgroundListenerRef.current) {
-            try { await backgroundListenerRef.current.stopAndUnloadAsync(); } catch (e) {}
-            backgroundListenerRef.current = null;
-        }
-        isAutoAgentActiveRef.current = false;
-        setIsAutoAgentRunning(false);
-        setIsManualRecording(false);
-        await unloadCurrentSound();
+        setIsTesting(true);
+        setTestCountdown(5);
 
         try {
             await Audio.setAudioModeAsync({
                 allowsRecordingIOS: true,
                 playsInSilentModeIOS: true,
-                staysActiveInBackground: true,
+                staysActiveInBackground: false,
                 shouldDuckAndroid: true,
-                playThroughEarpieceAndroid: false
+                playThroughEarpieceAndroid: false,
             });
 
-            console.log('Starting 5-second test with Mono AAC...');
-            const { recording } = await Audio.Recording.createAsync(
-                MONO_RECORDING_OPTIONS
-            );
-            testRecordingRef.current = recording;
-            setIsTesting(true);
-            setTestSecondsLeft(5);
+            const { recording } = await Audio.Recording.createAsync(RECORDING_OPTIONS);
+            testRecRef.current = recording;
 
             let remaining = 5;
-            testIntervalRef.current = setInterval(async () => {
+            testTimerRef.current = setInterval(async () => {
                 remaining -= 1;
-                setTestSecondsLeft(remaining);
-
+                setTestCountdown(remaining);
                 if (remaining <= 0) {
-                    clearInterval(testIntervalRef.current);
-                    testIntervalRef.current = null;
-
+                    clearInterval(testTimerRef.current);
+                    testTimerRef.current = null;
+                    const r = testRecRef.current;
+                    testRecRef.current = null;
+                    setIsTesting(false);
+                    if (!r) return;
                     try {
-                        const rec = testRecordingRef.current;
-                        testRecordingRef.current = null;
-                        setIsTesting(false);
+                        await r.stopAndUnloadAsync();
+                        const tempUri = r.getURI();
+                        if (!tempUri) { Alert.alert('Error', 'No se generó el archivo de audio.'); return; }
 
-                        if (rec) {
-                            await rec.stopAndUnloadAsync();
-                            const uri = rec.getURI();
+                        const ts = Date.now();
+                        const filename = `manual_record_${ts}.m4a`;
+                        const destUri = FileSystem.documentDirectory + filename;
+                        await FileSystem.copyAsync({ from: tempUri, to: destUri });
+                        await refreshRecordings();
 
-                            if (uri) {
-                                const filename = `manual_record_${Date.now()}.m4a`;
-                                const newPath = FileSystem.documentDirectory + filename;
-                                await FileSystem.copyAsync({ from: uri, to: newPath });
-
-                                await loadLocalRecordings();
-
-                                // Automatically play the test recording immediately
-                                setTimeout(() => {
-                                    handlePlayPause({ uri: newPath });
-                                }, 500);
-
-                                Alert.alert(
-                                    '🎉 ¡Prueba Exitosa!',
-                                    'Tu audio se grabó en tu teléfono y se está reproduciendo ahora mismo.\n\nComprueba cómo suena tu voz.'
-                                );
-                            }
-                        }
-                    } catch (finishErr) {
-                        console.error('Error finishing test:', finishErr);
-                        setIsTesting(false);
-                        Alert.alert('Aviso', 'Se completó la prueba. Verifica si aparece en la lista de abajo.');
-                        await loadLocalRecordings();
+                        // Auto-play immediately
+                        setTimeout(() => handlePlayPause({ id: filename, uri: destUri, label: 'Prueba de voz', filename }), 400);
+                        Alert.alert('🎉 ¡Prueba exitosa!', 'Tu voz quedó grabada y se está reproduciendo ahora. También aparece en "Mis Grabaciones" abajo.');
+                    } catch (err) {
+                        console.warn('[voiceTest finish]', err.message);
+                        Alert.alert('Aviso', 'Prueba completada. Revisa la lista de grabaciones.');
+                        await refreshRecordings();
                     }
                 }
             }, 1000);
-
-        } catch (startErr) {
-            console.error('Test record start error:', startErr);
+        } catch (err) {
             setIsTesting(false);
-            Alert.alert('Error', 'No se pudo iniciar la prueba: ' + startErr.message);
+            console.warn('[runVoiceTest]', err.message);
+            Alert.alert('Error', 'No se pudo iniciar la prueba: ' + err.message);
         }
     };
 
-    return (
-        <ScrollView contentContainerStyle={styles.container}>
-            <Text style={styles.title}>Einsdream Mobile</Text>
+    // ═══════════════════════════════════════════════════════════════════════
+    // stopAll
+    // ═══════════════════════════════════════════════════════════════════════
+    const stopAll = async () => {
+        if (nightActiveRef.current) await stopNightRecording();
+        else if (autoActiveRef.current) await stopAutoAgent();
+        if (testTimerRef.current) { clearInterval(testTimerRef.current); testTimerRef.current = null; }
+        if (testRecRef.current) {
+            try { await testRecRef.current.stopAndUnloadAsync(); } catch (_) {}
+            testRecRef.current = null;
+        }
+        setIsTesting(false);
+    };
 
-            <View style={styles.infoBox}>
-                <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#333' }}>🎙️ Grabación Nocturna (Recomendada)</Text>
-                <Text style={styles.infoText}>Presiona un botón al acostarte y duerme toda la noche. Guarda el audio completo en tu teléfono sin interrupciones.</Text>
-                <View style={{ height: 12 }} />
-                <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#333' }}>☁️ Auto-Agent Continuo (Nube)</Text>
-                <Text style={styles.infoText}>Escucha toda la noche silenciosamente y guarda clips cada vez que detecta un ronquido o ruido, sin despertarte con alertas.</Text>
+    // ─── Render ──────────────────────────────────────────────────────────────
+    const anyActive = nightActive || autoActive;
+
+    return (
+        <ScrollView contentContainerStyle={s.container} keyboardShouldPersistTaps="handled">
+            <Text style={s.title}>EinsDream Mobile</Text>
+
+            {/* ─── Info card ──────────────────────────────────────────────── */}
+            <View style={s.infoCard}>
+                <Text style={s.infoTitle}>📁 Dónde se guardan tus grabaciones</Text>
+                <Text style={s.infoText}>
+                    Todos los audios se guardan de forma permanente en la memoria interna del teléfono
+                    (almacenamiento privado de la app). Puedes escucharlos en cualquier momento en la lista
+                    de abajo, aunque estés sin internet.
+                </Text>
+                <Text style={s.infoPath}>
+                    Android: /data/data/host.exp.exponent/files/
+                </Text>
             </View>
 
-            {/* VISUAL BANNER FOR 5S TEST */}
+            {/* ─── Status banner ──────────────────────────────────────────── */}
             {isTesting && (
-                <View style={styles.testActiveBox}>
-                    <Text style={styles.testActiveTitle}>🔴 GRABANDO PRUEBA DE VOZ ({testSecondsLeft}s)</Text>
-                    <Text style={styles.testActiveSub}>Habla cerca del micrófono... ¡Se reproducirá en automático!</Text>
+                <View style={[s.banner, { borderColor: '#ef4444', backgroundColor: '#fff1f2' }]}>
+                    <Text style={[s.bannerTitle, { color: '#b91c1c' }]}>
+                        🔴 GRABANDO PRUEBA ({testCountdown}s) — ¡Habla ahora!
+                    </Text>
+                </View>
+            )}
+            {nightActive && (
+                <View style={[s.banner, { borderColor: '#2563eb', backgroundColor: '#eff6ff' }]}>
+                    <Text style={[s.bannerTitle, { color: '#1d4ed8' }]}>
+                        🔴 GRABACIÓN NOCTURNA — {fmtTime(nightSeconds)}
+                    </Text>
+                    <Text style={s.bannerSub}>
+                        Segmentos guardados: {nightSegmentCount} · Cada segmento ~30 seg
+                    </Text>
+                    <Text style={s.bannerSub}>
+                        Cada segmento se guarda en tu teléfono y se sube al Dashboard automáticamente.
+                    </Text>
+                </View>
+            )}
+            {autoActive && (
+                <View style={[s.banner, { borderColor: '#10b981', backgroundColor: '#f0fdf4' }]}>
+                    <Text style={[s.bannerTitle, { color: '#065f46' }]}>
+                        {autoRecording ? '🔴 CAPTURANDO EVENTO DE RUIDO...' : `👂 MONITOREANDO EN SILENCIO (${meteringDb} dB)`}
+                    </Text>
+                    <Text style={s.bannerSub}>Eventos capturados esta noche: {autoEventCount}</Text>
                 </View>
             )}
 
-            {/* STATUS BOX */}
-            <View style={[styles.statusBox, isManualRecording ? styles.statusBoxRecording : {}]}>
-                <Text style={[styles.statusText, isManualRecording ? { color: '#dc2626' } : {}]}>
-                    {isManualRecording ? `🔴 GRABANDO TODA LA NOCHE (${formatSeconds(manualSeconds)})` :
-                        isAutoAgentRunning ? (isAutoRecording ? "🔴 CAPTURANDO EVENTO DE RUIDO..." : `👂 MONITOREANDO SUEÑO (${recordedEventsCount} capturados)`) :
-                            "⚪ INACTIVO - LISTO PARA GRABAR"}
-                </Text>
-                {isManualRecording && (
-                    <Text style={{ color: '#64748b', marginTop: 6, fontSize: 13, textAlign: 'center' }}>
-                        Grabación nocturna continua activa. Deja tu teléfono en el velador y duerme tranquilamente.{'\n'}Presiona "DETENER" cuando despiertes por la mañana.
-                    </Text>
-                )}
-                {isAutoAgentRunning && (
-                    <Text style={{ color: '#64748b', marginTop: 6, fontSize: 13, textAlign: 'center' }}>
-                        Auto-Agent está monitoreando en silencio. Cada ruido detectado se guarda automáticamente en tu teléfono y se envía a la nube.
-                    </Text>
-                )}
-            </View>
-
-            {/* MAIN BUTTONS */}
-            <View style={styles.buttonContainer}>
-                {!isManualRecording && !isAutoAgentRunning && !isTesting && (
+            {/* ─── Main action buttons ─────────────────────────────────────── */}
+            <View style={s.btnGroup}>
+                {!anyActive && !isTesting && (
                     <>
-                        <TouchableOpacity style={[styles.bigBtn, { backgroundColor: '#2563EB' }]} onPress={startManualRecording}>
-                            <Text style={styles.bigBtnText}>🎙️ GRABAR TODA LA NOCHE (CONTINUO)</Text>
-                            <Text style={styles.bigBtnSub}>Graba toda la noche sin parar y duerme sin preocupaciones</Text>
+                        <TouchableOpacity style={[s.mainBtn, { backgroundColor: '#2563EB' }]} onPress={startNightRecording}>
+                            <Text style={s.mainBtnIcon}>🌙</Text>
+                            <Text style={s.mainBtnText}>GRABAR TODA LA NOCHE</Text>
+                            <Text style={s.mainBtnSub}>Continuo, segmentado c/30s — Sin interrupciones</Text>
                         </TouchableOpacity>
 
-                        <View style={{ height: 14 }} />
+                        <View style={{ height: 12 }} />
 
-                        <TouchableOpacity style={[styles.bigBtn, { backgroundColor: '#10B981' }]} onPress={startAutoAgent}>
-                            <Text style={styles.bigBtnText}>☁️ MONITOREAR RUIDOS (AUTO-AGENT)</Text>
-                            <Text style={styles.bigBtnSub}>Captura automática silenciosa ante ronquidos o ruidos</Text>
+                        <TouchableOpacity style={[s.mainBtn, { backgroundColor: '#10B981' }]} onPress={startAutoAgent}>
+                            <Text style={s.mainBtnIcon}>☁️</Text>
+                            <Text style={s.mainBtnText}>AUTO-AGENT (DETECTAR RUIDOS)</Text>
+                            <Text style={s.mainBtnSub}>Graba solo cuando detecta ronquidos — Sube solo</Text>
                         </TouchableOpacity>
                     </>
                 )}
 
-                {(isAutoAgentRunning || isManualRecording) && !isTesting && (
-                    <TouchableOpacity style={[styles.bigBtn, { backgroundColor: '#DC2626' }]} onPress={stopAll}>
-                        <Text style={styles.bigBtnText}>⏹️ DETENER Y GUARDAR GRABACIÓN</Text>
-                        <Text style={styles.bigBtnSub}>Finaliza la noche y deja el audio guardado en tu lista</Text>
+                {anyActive && !isTesting && (
+                    <TouchableOpacity style={[s.mainBtn, { backgroundColor: '#DC2626' }]} onPress={stopAll}>
+                        <Text style={s.mainBtnIcon}>⏹️</Text>
+                        <Text style={s.mainBtnText}>DETENER Y GUARDAR</Text>
+                        <Text style={s.mainBtnSub}>Finaliza la noche — El audio queda en "Mis Grabaciones"</Text>
                     </TouchableOpacity>
                 )}
             </View>
 
-            {/* GOOGLE HEALTH CONNECT CARD */}
-            <View style={styles.healthCard}>
-                <View style={styles.healthHeader}>
-                    <Text style={styles.healthTitle}>❤️ Estado de Salud</Text>
-                    <View style={[styles.healthBadge, healthStatus.connected ? styles.healthBadgeOn : styles.healthBadgeOff]}>
-                        <Text style={[styles.healthBadgeText, healthStatus.connected ? { color: '#065f46' } : { color: '#475569' }]}>
-                            {healthStatus.connected ? '● HEALTH CONNECT' : '● MODO AUTÓNOMO ACÚSTICO'}
-                        </Text>
-                    </View>
-                </View>
-
-                <Text style={styles.healthDesc}>
-                    {healthStatus.connected
-                        ? 'Vinculado con Health Connect para correlacionar pulso y respiración.'
-                        : 'Modo autónomo acústico activo: graba y analiza tu sueño por micrófono sin requerir ningún reloj ni sensor adicional.'}
-                </Text>
-
-                {!healthStatus.connected && (
-                    <TouchableOpacity
-                        style={styles.connectHealthBtn}
-                        onPress={handleConnectHealth}
-                        disabled={healthStatus.checking}
-                    >
-                        {healthStatus.checking ? (
-                            <ActivityIndicator color="#fff" size="small" />
-                        ) : (
-                            <Text style={styles.connectHealthBtnText}>🔗 Conectar Health Connect (Opcional)</Text>
-                        )}
-                    </TouchableOpacity>
-                )}
-            </View>
-
-            {/* SECCIÓN DE GRABACIONES LOCALES PARA EL ADULTO MAYOR */}
-            <View style={styles.recordingsCard}>
-                <View style={styles.recHeaderRow}>
-                    <Text style={styles.recordingsTitle}>🎧 Mis Grabaciones ({localRecordings.length})</Text>
-                    <TouchableOpacity onPress={loadLocalRecordings} style={styles.refreshBtn}>
-                        <Text style={styles.refreshBtnText}>🔄 Actualizar</Text>
+            {/* ─── Recordings list ─────────────────────────────────────────── */}
+            <View style={s.recCard}>
+                <View style={s.recHeader}>
+                    <Text style={s.recTitle}>🎧 Mis Grabaciones ({localRecordings.length})</Text>
+                    <TouchableOpacity style={s.refreshBtn} onPress={refreshRecordings}>
+                        <Text style={s.refreshBtnText}>🔄 Actualizar</Text>
                     </TouchableOpacity>
                 </View>
 
-                {/* BOTÓN DE PRUEBA RÁPIDA DE 5 SEGUNDOS */}
+                {/* Voice test button */}
                 <TouchableOpacity
-                    style={[styles.testBtn, isTesting ? { backgroundColor: '#fef3c7', borderColor: '#f59e0b' } : {}]}
-                    onPress={runQuickTestRecording}
+                    style={[s.testBtn, isTesting && { backgroundColor: '#fef9c3', borderColor: '#eab308' }]}
+                    onPress={runVoiceTest}
                     disabled={isTesting}
                 >
-                    {isTesting ? (
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                            <ActivityIndicator size="small" color="#d97706" />
-                            <Text style={{ color: '#b45309', fontWeight: '800', fontSize: 14 }}>
-                                Grabando prueba... {testSecondsLeft} segundos
-                            </Text>
-                        </View>
-                    ) : (
-                        <Text style={styles.testBtnText}>🎙️ Probar Micrófono (Grabar 5 seg de voz)</Text>
-                    )}
+                    {isTesting
+                        ? <ActivityIndicator color="#ca8a04" />
+                        : <Text style={s.testBtnText}>🎙 Probar micrófono (grabar 5 seg de voz)</Text>
+                    }
                 </TouchableOpacity>
 
                 <View style={{ height: 12 }} />
 
-                {isLoadingRecordings ? (
-                    <ActivityIndicator size="small" color="#2563EB" style={{ marginVertical: 20 }} />
+                {loadingRecs ? (
+                    <ActivityIndicator size="large" color="#2563EB" style={{ marginVertical: 24 }} />
                 ) : localRecordings.length === 0 ? (
-                    <View style={{ alignItems: 'center', paddingVertical: 12 }}>
-                        <Text style={styles.emptyText}>
-                            Aún no tienes grabaciones guardadas en tu teléfono.{'\n'}
-                            Toca el botón azul de arriba para hacer tu primera prueba.
+                    <View style={s.emptyBox}>
+                        <Text style={s.emptyTitle}>Aún no hay grabaciones</Text>
+                        <Text style={s.emptyText}>
+                            Toca "GRABAR TODA LA NOCHE" al acostarte.{'\n'}
+                            Los audios aparecerán aquí en tiempo real.
                         </Text>
                     </View>
                 ) : (
-                    localRecordings.map((rec) => {
-                        const isThisPlaying = playingUri === rec.uri && isPlaying;
-                        const isThisSelected = playingUri === rec.uri;
+                    localRecordings.map(rec => {
+                        const isSelected = playingUri === rec.uri;
+                        const isThisPlaying = isSelected && playing;
+                        const isUploaded = uploadedIds.has(rec.id);
+                        const isUploading = uploadingId === rec.id;
+
                         return (
-                            <View key={rec.filename} style={styles.recItem}>
+                            <View key={rec.id} style={[s.recItem, isSelected && s.recItemActive]}>
                                 <View style={{ flex: 1 }}>
-                                    <Text style={styles.recDate}>📅 {rec.dateStr}</Text>
-                                    <Text style={styles.recSize}>Tamaño: {rec.sizeStr}</Text>
-                                    {isThisSelected && (
-                                        <Text style={styles.recProgress}>
-                                            {isThisPlaying ? '▶ Reproduciendo: ' : '⏸ En pausa: '}
-                                            {formatTime(playbackMillis)} / {formatTime(durationMillis)}
+                                    <Text style={s.recLabel}>{rec.label}</Text>
+                                    <Text style={s.recMeta}>{rec.sizeMb} MB</Text>
+                                    {isSelected && (
+                                        <Text style={s.recProgress}>
+                                            {isThisPlaying ? '▶ ' : '⏸ '}{fmtMs(posMs)} / {fmtMs(durMs)}
                                         </Text>
                                     )}
                                 </View>
 
+                                {/* Play/Pause */}
                                 <TouchableOpacity
-                                    style={[styles.playBtn, isThisPlaying ? styles.pauseBtn : {}]}
+                                    style={[s.iconBtn, { backgroundColor: isThisPlaying ? '#f59e0b' : '#10b981' }]}
                                     onPress={() => handlePlayPause(rec)}
                                 >
-                                    <Text style={styles.playBtnText}>
-                                        {isThisPlaying ? '⏸ PAUSAR' : '▶ ESCUCHAR'}
-                                    </Text>
+                                    <Text style={s.iconBtnText}>{isThisPlaying ? '⏸' : '▶'}</Text>
                                 </TouchableOpacity>
 
+                                {/* Upload */}
                                 <TouchableOpacity
-                                    style={styles.delBtn}
-                                    onPress={() => handleDeleteRecording(rec)}
+                                    style={[s.iconBtn, { backgroundColor: isUploaded ? '#6366f1' : '#3b82f6', marginLeft: 6 }]}
+                                    onPress={() => handleManualUpload(rec)}
+                                    disabled={isUploaded || isUploading}
                                 >
-                                    <Text style={styles.delBtnText}>🗑</Text>
+                                    {isUploading
+                                        ? <ActivityIndicator size="small" color="#fff" />
+                                        : <Text style={s.iconBtnText}>{isUploaded ? '✓' : '☁'}</Text>
+                                    }
+                                </TouchableOpacity>
+
+                                {/* Delete */}
+                                <TouchableOpacity
+                                    style={[s.iconBtn, { backgroundColor: '#ef4444', marginLeft: 6 }]}
+                                    onPress={() => handleDelete(rec)}
+                                >
+                                    <Text style={s.iconBtnText}>🗑</Text>
                                 </TouchableOpacity>
                             </View>
                         );
@@ -889,267 +829,52 @@ export default function RecordingScreen({ token, onLogout }) {
                 )}
             </View>
 
-            <View style={{ marginTop: 30, borderTopWidth: 1, borderColor: '#eee', paddingTop: 20, width: '100%' }}>
-                <Button title="Cerrar Sesión" onPress={onLogout} color="#888" />
+            <View style={{ marginTop: 28, borderTopWidth: 1, borderColor: '#e2e8f0', paddingTop: 18, width: '100%' }}>
+                <Button title="Cerrar sesión" onPress={onLogout} color="#64748b" />
             </View>
         </ScrollView>
     );
 }
 
-const styles = StyleSheet.create({
-    container: {
-        flexGrow: 1,
-        alignItems: 'center',
-        padding: 18,
-        backgroundColor: '#f8fafc',
-    },
-    title: {
-        fontSize: 28,
-        fontWeight: 'bold',
-        marginBottom: 20,
-        color: '#0f172a',
-        letterSpacing: 1
-    },
-    infoBox: {
-        backgroundColor: '#e0f2fe',
-        padding: 16,
-        borderRadius: 14,
-        width: '100%',
-        marginBottom: 16,
-        borderColor: '#bae6fd',
-        borderWidth: 1,
-    },
-    infoText: {
-        color: '#334155',
-        fontSize: 14,
-        marginTop: 4,
-        lineHeight: 20
-    },
-    testActiveBox: {
-        backgroundColor: '#fee2e2',
-        borderColor: '#ef4444',
-        borderWidth: 2,
-        borderRadius: 14,
-        padding: 16,
-        width: '100%',
-        marginBottom: 16,
-        alignItems: 'center'
-    },
-    testActiveTitle: {
-        color: '#b91c1c',
-        fontWeight: '900',
-        fontSize: 16,
-        letterSpacing: 0.5
-    },
-    testActiveSub: {
-        color: '#7f1d1d',
-        fontSize: 13,
-        marginTop: 4,
-        fontWeight: '600'
-    },
-    healthCard: {
-        width: '100%',
-        backgroundColor: '#ffffff',
-        borderRadius: 14,
-        padding: 16,
-        marginBottom: 18,
-        borderWidth: 1,
-        borderColor: '#e2e8f0',
-        elevation: 2
-    },
-    healthHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 8
-    },
-    healthTitle: {
-        fontSize: 16,
-        fontWeight: '700',
-        color: '#0f172a'
-    },
-    healthBadge: {
-        paddingHorizontal: 10,
-        paddingVertical: 4,
-        borderRadius: 8
-    },
-    healthBadgeOn: {
-        backgroundColor: '#d1fae5'
-    },
-    healthBadgeOff: {
-        backgroundColor: '#f1f5f9'
-    },
-    healthBadgeText: {
-        fontSize: 11,
-        fontWeight: '800',
-        letterSpacing: 0.5
-    },
-    healthDesc: {
-        fontSize: 13,
-        color: '#64748b',
-        lineHeight: 18,
-        marginBottom: 8
-    },
-    connectHealthBtn: {
-        backgroundColor: '#4f46e5',
-        paddingVertical: 10,
-        borderRadius: 10,
-        alignItems: 'center',
-        marginTop: 8
-    },
-    connectHealthBtnText: {
-        color: '#ffffff',
-        fontWeight: '700',
-        fontSize: 13
-    },
-    statusBox: {
-        padding: 18,
-        backgroundColor: '#ffffff',
-        borderRadius: 14,
-        width: '100%',
-        alignItems: 'center',
-        marginBottom: 20,
-        borderWidth: 1,
-        borderColor: '#e2e8f0',
-        elevation: 2
-    },
-    statusBoxRecording: {
-        borderColor: '#fca5a5',
-        backgroundColor: '#fff1f2'
-    },
-    statusText: {
-        fontSize: 16,
-        fontWeight: 'bold',
-        textAlign: 'center',
-        color: '#1e293b'
-    },
-    buttonContainer: {
-        width: '100%',
-        marginBottom: 22
-    },
-    bigBtn: {
-        paddingVertical: 16,
-        paddingHorizontal: 18,
-        borderRadius: 14,
-        alignItems: 'center',
-        justifyContent: 'center',
-        elevation: 3
-    },
-    bigBtnText: {
-        color: '#ffffff',
-        fontSize: 16,
-        fontWeight: 'bold',
-        letterSpacing: 0.5
-    },
-    bigBtnSub: {
-        color: 'rgba(255, 255, 255, 0.85)',
-        fontSize: 12,
-        marginTop: 3
-    },
-    recordingsCard: {
-        width: '100%',
-        backgroundColor: '#ffffff',
-        borderRadius: 16,
-        padding: 18,
-        borderWidth: 1,
-        borderColor: '#cbd5e1',
-        elevation: 3
-    },
-    recHeaderRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 14
-    },
-    recordingsTitle: {
-        fontSize: 19,
-        fontWeight: '800',
-        color: '#0f172a'
-    },
-    refreshBtn: {
-        backgroundColor: '#f1f5f9',
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 8,
-        borderWidth: 1,
-        borderColor: '#cbd5e1'
-    },
-    refreshBtnText: {
-        fontSize: 13,
-        fontWeight: '600',
-        color: '#334155'
-    },
-    emptyText: {
-        color: '#64748b',
-        textAlign: 'center',
-        marginBottom: 14,
-        fontSize: 14,
-        lineHeight: 22
-    },
-    testBtn: {
-        backgroundColor: '#eff6ff',
-        paddingVertical: 14,
-        paddingHorizontal: 18,
-        borderRadius: 12,
-        borderWidth: 1.5,
-        borderColor: '#3b82f6',
-        alignItems: 'center',
-        justifyContent: 'center'
-    },
-    testBtnText: {
-        color: '#1d4ed8',
-        fontWeight: '800',
-        fontSize: 15
-    },
-    recItem: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#f8fafc',
-        borderRadius: 12,
-        padding: 14,
-        marginBottom: 10,
-        borderWidth: 1,
-        borderColor: '#e2e8f0'
-    },
-    recDate: {
-        fontSize: 15,
-        fontWeight: '700',
-        color: '#1e293b',
-        marginBottom: 2
-    },
-    recSize: {
-        fontSize: 13,
-        color: '#64748b'
-    },
-    recProgress: {
-        fontSize: 12,
-        fontWeight: '600',
-        color: '#2563eb',
-        marginTop: 4
-    },
-    playBtn: {
-        backgroundColor: '#10b981',
-        paddingVertical: 12,
-        paddingHorizontal: 14,
-        borderRadius: 10,
-        marginLeft: 10
-    },
-    pauseBtn: {
-        backgroundColor: '#f59e0b'
-    },
-    playBtnText: {
-        color: '#ffffff',
-        fontWeight: 'bold',
-        fontSize: 13
-    },
-    delBtn: {
-        backgroundColor: '#fee2e2',
-        paddingVertical: 12,
-        paddingHorizontal: 12,
-        borderRadius: 10,
-        marginLeft: 8
-    },
-    delBtnText: {
-        fontSize: 16
-    }
+// ─── Styles ───────────────────────────────────────────────────────────────────
+const s = StyleSheet.create({
+    container: { flexGrow: 1, padding: 16, backgroundColor: '#f8fafc', alignItems: 'stretch' },
+    title: { fontSize: 26, fontWeight: '900', color: '#0f172a', textAlign: 'center', marginBottom: 16, letterSpacing: 0.5 },
+
+    infoCard: { backgroundColor: '#e0f2fe', borderRadius: 12, padding: 14, marginBottom: 14, borderWidth: 1, borderColor: '#7dd3fc' },
+    infoTitle: { fontWeight: '700', fontSize: 15, color: '#0369a1', marginBottom: 6 },
+    infoText: { fontSize: 13, color: '#334155', lineHeight: 19 },
+    infoPath: { fontSize: 11, color: '#64748b', fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', marginTop: 6, backgroundColor: '#dbeafe', padding: 4, borderRadius: 4 },
+
+    banner: { borderRadius: 12, padding: 14, marginBottom: 14, borderWidth: 1.5 },
+    bannerTitle: { fontWeight: '800', fontSize: 15, textAlign: 'center' },
+    bannerSub: { fontSize: 12, color: '#334155', textAlign: 'center', marginTop: 4 },
+
+    btnGroup: { marginBottom: 20 },
+    mainBtn: { borderRadius: 14, padding: 16, alignItems: 'center', elevation: 3 },
+    mainBtnIcon: { fontSize: 22, marginBottom: 2 },
+    mainBtnText: { color: '#fff', fontWeight: '800', fontSize: 15, letterSpacing: 0.3 },
+    mainBtnSub: { color: 'rgba(255,255,255,0.82)', fontSize: 12, marginTop: 3 },
+
+    recCard: { backgroundColor: '#fff', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#cbd5e1', elevation: 3 },
+    recHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+    recTitle: { fontWeight: '800', fontSize: 17, color: '#0f172a' },
+    refreshBtn: { backgroundColor: '#f1f5f9', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e1' },
+    refreshBtnText: { fontSize: 13, fontWeight: '600', color: '#334155' },
+
+    testBtn: { backgroundColor: '#eff6ff', paddingVertical: 13, borderRadius: 12, borderWidth: 1.5, borderColor: '#3b82f6', alignItems: 'center' },
+    testBtnText: { color: '#1d4ed8', fontWeight: '800', fontSize: 14 },
+
+    emptyBox: { alignItems: 'center', paddingVertical: 20 },
+    emptyTitle: { fontWeight: '700', fontSize: 16, color: '#334155', marginBottom: 6 },
+    emptyText: { fontSize: 14, color: '#64748b', textAlign: 'center', lineHeight: 22 },
+
+    recItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#f8fafc', borderRadius: 12, padding: 12, marginBottom: 10, borderWidth: 1, borderColor: '#e2e8f0' },
+    recItemActive: { borderColor: '#6366f1', backgroundColor: '#f5f3ff' },
+    recLabel: { fontSize: 14, fontWeight: '700', color: '#1e293b', marginBottom: 2 },
+    recMeta: { fontSize: 12, color: '#64748b' },
+    recProgress: { fontSize: 11, fontWeight: '600', color: '#6366f1', marginTop: 3 },
+
+    iconBtn: { paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, marginLeft: 6, alignItems: 'center', justifyContent: 'center' },
+    iconBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
 });
