@@ -2,8 +2,8 @@
 """
 patch_apk_metadata.py
 Safely patches AndroidManifest.xml and assets/app.config in einsdream-mobile.apk:
-1. Replaces UTF-16LE '1.0.0' with '2.1.0' in AndroidManifest.xml so Android OS Settings displays 'versión 2.1.0'
-2. Replaces '1.1.4' / '1.0.0' with '2.1.0' in assets/app.config
+1. Replaces UTF-16LE '2.1.0' / '1.0.0' with '2.2.0' in AndroidManifest.xml so Android OS Settings displays 'versión 2.2.0'
+2. Replaces '2.1.0' / '1.1.4' / '1.0.0' with '2.2.0' in assets/app.config
 3. Preserves all other entries, compression levels, and service loader targets
 """
 
@@ -16,7 +16,7 @@ if not os.path.exists(apk_path):
     print(f"Error: {apk_path} not found!")
     sys.exit(1)
 
-print(f"Patching metadata in {apk_path}...")
+print(f"Patching metadata in {apk_path} to v2.2.0...")
 
 entries = {}
 with zipfile.ZipFile(apk_path, 'r') as z_in:
@@ -31,21 +31,29 @@ if manifest_info is None:
 manifest = entries[manifest_info]
 u100 = '1.0.0'.encode('utf-16le')
 u210 = '2.1.0'.encode('utf-16le')
+u220 = '2.2.0'.encode('utf-16le')
 
-if u100 in manifest:
-    new_manifest = manifest.replace(u100, u210)
+if u210 in manifest:
+    new_manifest = manifest.replace(u210, u220)
     assert len(new_manifest) == len(manifest), "Manifest length changed!"
     entries[manifest_info] = new_manifest
-    print("Successfully replaced UTF-16LE '1.0.0' with '2.1.0' in AndroidManifest.xml")
+    print("Successfully replaced UTF-16LE '2.1.0' with '2.2.0' in AndroidManifest.xml")
+elif u100 in manifest:
+    new_manifest = manifest.replace(u100, u220)
+    assert len(new_manifest) == len(manifest), "Manifest length changed!"
+    entries[manifest_info] = new_manifest
+    print("Successfully replaced UTF-16LE '1.0.0' with '2.2.0' in AndroidManifest.xml")
+elif u220 in manifest:
+    print("Notice: '2.2.0' already in AndroidManifest.xml")
 else:
-    print("Notice: '1.0.0' UTF-16LE not found in manifest (already 2.1.0 or different version)")
+    print("Notice: neither '2.1.0' nor '1.0.0' UTF-16LE found in manifest")
 
 app_config_info = next((i for i in entries if i.filename == 'assets/app.config'), None)
 if app_config_info:
     cfg = entries[app_config_info]
-    new_cfg = cfg.replace(b'"1.1.4"', b'"2.1.0"').replace(b'"1.0.0"', b'"2.1.0"')
+    new_cfg = cfg.replace(b'"2.1.0"', b'"2.2.0"').replace(b'"1.1.4"', b'"2.2.0"').replace(b'"1.0.0"', b'"2.2.0"')
     entries[app_config_info] = new_cfg
-    print("Successfully updated version to '2.1.0' in assets/app.config")
+    print("Successfully updated version to '2.2.0' in assets/app.config")
 
 # Write back preserving compression
 with zipfile.ZipFile(apk_path, 'w', allowZip64=True) as z_out:
@@ -55,7 +63,7 @@ with zipfile.ZipFile(apk_path, 'w', allowZip64=True) as z_out:
 # Verify
 with zipfile.ZipFile(apk_path, 'r') as z_check:
     m = z_check.read('AndroidManifest.xml')
-    assert u210 in m, "Verification failed: 2.1.0 not found in AndroidManifest.xml!"
+    assert u220 in m, "Verification failed: 2.2.0 not found in AndroidManifest.xml!"
     assert 'META-INF/services/kotlinx.coroutines.internal.MainDispatcherFactory' in z_check.namelist(), "MainDispatcherFactory missing!"
 
 print(f"Metadata patch complete and verified for {apk_path}")

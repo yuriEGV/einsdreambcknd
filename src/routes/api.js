@@ -76,8 +76,15 @@ router.get('/sessions/night/:date', authMiddleware, uploadController.getNightSes
 // ==================== HEALTH CONNECT & NIGHT ENGINE SESSIONS ====================
 router.post('/night-sessions', authMiddleware, nightSessionController.syncNightSession);
 router.get('/night-sessions/history', authMiddleware, nightSessionController.getNightSessionsHistory);
+router.get('/night-sessions/trends', authMiddleware, nightSessionController.getTrendsBenchmark);
+router.get('/night-sessions/predict-bedtime', authMiddleware, nightSessionController.getOptimalBedtime);
+router.get('/night-sessions/latest-analysis', authMiddleware, nightSessionController.getLatestAnalysis);
 router.get('/night-sessions/date/:date', authMiddleware, nightSessionController.getNightSessionByDate);
 router.get('/night-sessions/:id', authMiddleware, nightSessionController.getNightSessionById);
+
+// ==================== SLEEP TEST & BASELINE PROFILE ====================
+router.post('/sleep-test', authMiddleware, nightSessionController.saveSleepTest);
+router.get('/sleep-test', authMiddleware, nightSessionController.getSleepTest);
 
 // Audio playback & streaming
 router.get('/sessions/:id/audio', authMiddleware, uploadController.getAudioById);

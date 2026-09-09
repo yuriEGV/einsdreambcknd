@@ -34,9 +34,9 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 // Specific handler for versioned APK downloads
-app.get(['/public/einsdream-mobile-v2.1.1.apk', '/public/einsdream-mobile-v2.1.0.apk'], (req, res) => {
+app.get(['/public/einsdream-mobile-v2.2.0.apk', '/public/einsdream-mobile-v2.1.1.apk', '/public/einsdream-mobile-v2.1.0.apk'], (req, res) => {
   const apkPath = path.join(__dirname, '../public/einsdream-mobile.apk');
-  res.download(apkPath, 'einsdream-mobile-v2.1.1.apk');
+  res.download(apkPath, 'einsdream-mobile-v2.2.0.apk');
 });
 
 // Serve static files from the public directory
@@ -49,7 +49,7 @@ app.get(['/download/apk', '/download/apk/:version'], (req, res) => {
   res.setHeader('Expires', '0');
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
   const apkPath = path.join(__dirname, '../public/einsdream-mobile.apk');
-  const targetFilename = req.params.version ? `einsdream-mobile-v${req.params.version}.apk` : 'einsdream-mobile-v2.1.1.apk';
+  const targetFilename = req.params.version ? `einsdream-mobile-v${req.params.version}.apk` : 'einsdream-mobile-v2.2.0.apk';
   res.download(apkPath, targetFilename, (err) => {
     if (err && !res.headersSent) {
       res.redirect('/public/einsdream-mobile.apk');
@@ -93,7 +93,7 @@ app.get('/', async (req, res) => {
   res.json({
     status: 'ONLINE',
     message: 'Einsdream Backend API is running',
-    version: '2.0.0',
+    version: '2.2.0',
     dbStatus: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
     dbError: lastDbError,
     timestamp: new Date().toISOString()

@@ -143,6 +143,42 @@ const nightSessionSchema = new mongoose.Schema({
         totalCoughEvents: { type: Number, default: 0 },
         evaluationNote: String
     },
+    // Einsdream Score Engine (3 Health Pillars)
+    einsdreamScore: {
+        totalScore: { type: Number, default: 0 }, // 0 - 100
+        regularityScore: { type: Number, default: 0 }, // 40% weighting
+        durationScore: { type: Number, default: 0 }, // 30% weighting
+        qualityScore: { type: Number, default: 0 }, // 30% weighting
+        ratingStars: { type: Number, default: 3 }, // 1 - 5 stars
+        deficitMinutes: { type: Number, default: 0 }, // +/- min vs target
+        irregularityMinutes: { type: Number, default: 0 } // schedule deviation
+    },
+    // 6+ Rest Dimensions Balance (0 - 100)
+    dimensions: {
+        duration: { type: Number, default: 0 },
+        deepSleep: { type: Number, default: 0 },
+        regularity: { type: Number, default: 0 },
+        efficiency: { type: Number, default: 0 },
+        cardioRecovery: { type: Number, default: 0 },
+        acousticPeace: { type: Number, default: 0 },
+        remSleep: { type: Number, default: 0 }
+    },
+    // Advanced Cardiovascular Monitoring
+    cardiovascular: {
+        avgHeartRate: Number,
+        minHeartRate: Number,
+        maxHeartRate: Number,
+        hrvSdann: Number, // Heart Rate Variability (ms)
+        hrvGain: Number, // HRV gain at waking vs nadir (%)
+        recoveryLevel: { type: String, enum: ['Excelente', 'Óptima', 'Moderada', 'Baja'], default: 'Óptima' }
+    },
+    // Snoring & Acoustic Peace Metrics
+    snoreMetrics: {
+        snorePercentage: { type: Number, default: 0 },
+        totalSnoreMinutes: { type: Number, default: 0 },
+        snoreEventsCount: { type: Number, default: 0 },
+        irregularityIndex: { type: Number, default: 0 }
+    },
     createdAt: {
         type: Date,
         default: Date.now
