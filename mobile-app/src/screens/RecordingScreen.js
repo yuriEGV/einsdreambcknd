@@ -1,5 +1,5 @@
 /**
- * RecordingScreen.js - EinsDream 2026 v2.2.0
+ * RecordingScreen.js - EinsDream 2026 v2.3.0
  *
  * Sistema Inteligente de Monitoreo Nocturno, Motor Einsdream Score y Análisis Predictivo
  *
@@ -1008,7 +1008,7 @@ export default function RecordingScreen({ token, onLogout }) {
             <View style={s.topHeader}>
                 <Text style={s.mainAppTitle}>EinsDream</Text>
                 <View style={s.versionBadge}>
-                    <Text style={s.versionText}>v2.2.0 (Estable)</Text>
+                    <Text style={s.versionText}>v2.3.0 (Estable)</Text>
                 </View>
             </View>
 
