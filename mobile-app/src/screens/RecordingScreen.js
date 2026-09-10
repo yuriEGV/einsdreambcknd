@@ -86,11 +86,14 @@ const RECORDING_OPTIONS = {
     web: { mimeType: 'audio/mp4', bitsPerSecond: 96000 },
 };
 
-const NOISE_THRESHOLD_DB = -36;
-const EVENT_CAPTURE_SECONDS = 8;
-const MAX_STORAGE_MB = 100;
-const INDEX_FILENAME = 'einsdream_events_index.json';
-const PROFILE_FILENAME = 'einsdream_sleep_profile.json';
+const NOISE_THRESHOLD_DB  = -36;
+// 20s window: mic has been running ~5s already when trigger fires (pre-buffer),
+// then we continue 15s more post-trigger before saving the clip.
+const POST_CAPTURE_SECONDS = 15;
+const TOTAL_CAPTURE_SECONDS = 20; // pre(~5s already elapsed) + post(15s)
+const MAX_STORAGE_MB       = 100;
+const INDEX_FILENAME        = 'einsdream_events_index.json';
+const PROFILE_FILENAME      = 'einsdream_sleep_profile.json';
 const SESSIONS_CACHE_FILENAME = 'einsdream_sessions_cache.json';
 
 // ─── Clasificador Acústico Local ──────────────────────────────────────────────
@@ -254,6 +257,9 @@ export default function RecordingScreen({ token, onLogout }) {
                 staysActiveInBackground: true,
                 shouldDuckAndroid: true,
                 playThroughEarpieceAndroid: false,
+                // iOS: keep recording mode active
+                interruptionModeIOS: Audio.INTERRUPTION_MODE_IOS_DO_NOT_MIX,
+                interruptionModeAndroid: Audio.INTERRUPTION_MODE_ANDROID_DO_NOT_MIX,
             });
         } catch (e) {
             console.warn('[setupAudioMode]', e.message);
@@ -506,11 +512,13 @@ export default function RecordingScreen({ token, onLogout }) {
                     staysActiveInBackground: false,
                     shouldDuckAndroid: false,
                     playThroughEarpieceAndroid: false,
+                    interruptionModeIOS: Audio.INTERRUPTION_MODE_IOS_DO_NOT_MIX,
+                    interruptionModeAndroid: Audio.INTERRUPTION_MODE_ANDROID_DO_NOT_MIX,
                 });
 
                 const { sound } = await Audio.Sound.createAsync(
                     { uri: rec.uri },
-                    { shouldPlay: true, progressUpdateIntervalMillis: 200 },
+                    { shouldPlay: true, progressUpdateIntervalMillis: 150 },
                     (status) => {
                         if (status.isLoaded) {
                             setPosMs(status.positionMillis || 0);
@@ -539,6 +547,30 @@ export default function RecordingScreen({ token, onLogout }) {
         } catch (err) {
             console.warn('[handlePlayPause]', err.message);
             Alert.alert('Error de audio', 'No se pudo reproducir este archivo.');
+        }
+    };
+
+    // Seek to a specific position in the current track
+    const handleSeek = async (pct) => {
+        if (!soundRef.current || !durMs) return;
+        try {
+            const targetMs = Math.max(0, Math.min(durMs, Math.round(pct * durMs)));
+            await soundRef.current.setPositionAsync(targetMs);
+            setPosMs(targetMs);
+        } catch (err) {
+            console.warn('[handleSeek]', err.message);
+        }
+    };
+
+    // Skip forward or backward by seconds
+    const handleSkip = async (deltaSecs) => {
+        if (!soundRef.current || !durMs) return;
+        try {
+            const targetMs = Math.max(0, Math.min(durMs, posMs + deltaSecs * 1000));
+            await soundRef.current.setPositionAsync(targetMs);
+            setPosMs(targetMs);
+        } catch (err) {
+            console.warn('[handleSkip]', err.message);
         }
     };
 
@@ -737,6 +769,8 @@ export default function RecordingScreen({ token, onLogout }) {
                 staysActiveInBackground: true,
                 shouldDuckAndroid: true,
                 playThroughEarpieceAndroid: false,
+                interruptionModeIOS: Audio.INTERRUPTION_MODE_IOS_DO_NOT_MIX,
+                interruptionModeAndroid: Audio.INTERRUPTION_MODE_ANDROID_DO_NOT_MIX,
             });
 
             if (listenerRecRef.current) {
@@ -773,12 +807,17 @@ export default function RecordingScreen({ token, onLogout }) {
         }
     };
 
+    // captureDetectedEvent: the mic has been running for ~5s already (pre-buffer),
+    // so we continue recording for POST_CAPTURE_SECONDS (15s) more, then save the
+    // full clip (≈20s: 5s pre-sound + 15s post-sound) and restart continuous listening.
     const captureDetectedEvent = async () => {
         if (capturingRef.current || !monitorActiveRef.current) return;
         capturingRef.current = true;
         setIsCapturing(true);
 
-        await new Promise((r) => setTimeout(r, EVENT_CAPTURE_SECONDS * 1000));
+        // Wait POST_CAPTURE_SECONDS (15s) after the trigger — the clip will include
+        // ~5s of audio before the trigger (because the recorder was already running).
+        await new Promise((r) => setTimeout(r, POST_CAPTURE_SECONDS * 1000));
         if (!monitorActiveRef.current) {
             capturingRef.current = false;
             setIsCapturing(false);
@@ -802,7 +841,7 @@ export default function RecordingScreen({ token, onLogout }) {
                     const maxDb = Math.max(...samples);
 
                     const analysis = classifyAcousticEvent({
-                        durationSecs: EVENT_CAPTURE_SECONDS,
+                        durationSecs: TOTAL_CAPTURE_SECONDS,
                         avgDb,
                         maxDb,
                     });
@@ -821,7 +860,7 @@ export default function RecordingScreen({ token, onLogout }) {
                         eventType: analysis.eventType,
                         confidence: analysis.confidence,
                         intensityDb: maxDb,
-                        durationSecs: EVENT_CAPTURE_SECONDS,
+                        durationSecs: TOTAL_CAPTURE_SECONDS,
                         timestamp: ts,
                     };
                     await saveMetadataIndex(metaIndex);
@@ -878,6 +917,8 @@ export default function RecordingScreen({ token, onLogout }) {
                 staysActiveInBackground: false,
                 shouldDuckAndroid: true,
                 playThroughEarpieceAndroid: false,
+                interruptionModeIOS: Audio.INTERRUPTION_MODE_IOS_DO_NOT_MIX,
+                interruptionModeAndroid: Audio.INTERRUPTION_MODE_ANDROID_DO_NOT_MIX,
             });
 
             const { recording } = await Audio.Recording.createAsync(RECORDING_OPTIONS);
@@ -1369,11 +1410,12 @@ export default function RecordingScreen({ token, onLogout }) {
                             </Text>
                         </View>
                     ) : (
-                        localRecordings.map((rec) => {
+                    {localRecordings.map((rec) => {
                             const isSelected = playingUri === rec.uri;
                             const isThisPlaying = isSelected && playing;
                             const isUploaded = uploadedIds.has(rec.id);
                             const isUploading = uploadingId === rec.id;
+                            const progress = isSelected && durMs > 0 ? posMs / durMs : 0;
 
                             return (
                                 <View key={rec.id} style={[s.recItem, isSelected && s.recItemActive]}>
@@ -1382,12 +1424,36 @@ export default function RecordingScreen({ token, onLogout }) {
                                         <Text style={s.recMeta}>
                                             {rec.dateStr} · {rec.sizeKb} KB
                                         </Text>
+
+                                        {/* Enhanced Audio Controls */}
                                         {isSelected && durMs > 0 && (
-                                            <View style={{ marginTop: 4 }}>
-                                                <View style={s.progressContainer}>
-                                                    <View style={[s.progressBar, { width: `${Math.min(100, (posMs / durMs) * 100)}%` }]} />
+                                            <View style={s.playerControls}>
+                                                {/* Touchable seek bar */}
+                                                <TouchableOpacity
+                                                    activeOpacity={0.8}
+                                                    style={s.seekBarTrack}
+                                                    onPress={(e) => {
+                                                        // Calculate seek position from tap X
+                                                        const { locationX, target } = e.nativeEvent;
+                                                        e.target.measure((fx, fy, width) => {
+                                                            handleSeek(Math.max(0, Math.min(1, locationX / (width || 1))));
+                                                        });
+                                                    }}
+                                                >
+                                                    <View style={[s.seekBarFill, { flex: Math.max(0.001, progress) }]} />
+                                                    <View style={{ flex: Math.max(0.001, 1 - progress) }} />
+                                                </TouchableOpacity>
+
+                                                {/* Time + skip controls row */}
+                                                <View style={s.playerRow}>
+                                                    <TouchableOpacity style={s.skipBtn} onPress={() => handleSkip(-10)}>
+                                                        <Text style={s.skipBtnText}>⏪ 10s</Text>
+                                                    </TouchableOpacity>
+                                                    <Text style={s.timeText}>{fmtMs(posMs)} / {fmtMs(durMs)}</Text>
+                                                    <TouchableOpacity style={s.skipBtn} onPress={() => handleSkip(10)}>
+                                                        <Text style={s.skipBtnText}>10s ⏩</Text>
+                                                    </TouchableOpacity>
                                                 </View>
-                                                <Text style={s.timeText}>{fmtMs(posMs)} / {fmtMs(durMs)}</Text>
                                             </View>
                                         )}
                                     </View>
@@ -1425,7 +1491,7 @@ export default function RecordingScreen({ token, onLogout }) {
                                     </TouchableOpacity>
                                 </View>
                             );
-                        })
+                        })}
                     )}
                 </View>
             )}
@@ -1976,6 +2042,43 @@ const s = StyleSheet.create({
         fontSize: 9,
         color: '#94a3b8',
         marginTop: 2,
+    },
+
+    // ── Enhanced audio player ──
+    playerControls: {
+        marginTop: 6,
+    },
+    seekBarTrack: {
+        height: 8,
+        backgroundColor: '#334155',
+        borderRadius: 4,
+        overflow: 'hidden',
+        flexDirection: 'row',
+        marginVertical: 4,
+    },
+    seekBarFill: {
+        height: '100%',
+        backgroundColor: '#38bdf8',
+        borderRadius: 4,
+    },
+    playerRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginTop: 2,
+    },
+    skipBtn: {
+        paddingVertical: 3,
+        paddingHorizontal: 8,
+        backgroundColor: '#0f172a',
+        borderRadius: 6,
+        borderWidth: 1,
+        borderColor: '#334155',
+    },
+    skipBtnText: {
+        fontSize: 10,
+        color: '#38bdf8',
+        fontWeight: '700',
     },
 
     iconBtn: {

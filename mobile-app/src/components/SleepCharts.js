@@ -2,11 +2,13 @@
  * SleepCharts.js
  * High-performance, rich clinical visualizations for EinsDream:
  * - Circular Dials / Ring Gauges (Duration, Deep Sleep %, Irregularity, Efficiency, Acoustic Peace)
- * - Multi-dimensional Rest Balance Chart (6+ dimensions)
- * - Layered Hypnogram Stages (Awake, REM, Light, Deep)
- * - Actigraphy Nocturnal Activity Waveform
- * - Cardiovascular HR & HRV Recovery Graph with HRV Gain
+ * - Multi-dimensional Rest Balance Chart (6+ dimensions) — FIXED for React Native
+ * - Layered Hypnogram Stages (Awake, REM, Light, Deep) — FIXED bar rendering
+ * - Actigraphy Nocturnal Activity Waveform — FIXED heights
+ * - Cardiovascular HR & HRV Recovery Graph — FIXED curve rendering
  * - Star Rating Display (1-5 stars)
+ *
+ * iOS & Android compatible — no percentage-string widths on flex children.
  */
 
 import React from 'react';
@@ -23,26 +25,37 @@ export function CircularDial({
     size = 96,
     icon = '⏱️'
 }) {
-    // Percentage clamped to 0-100
     const pct = Math.max(0, Math.min(100, percentage));
+    const strokeW = 5;
+    const inner = size - strokeW * 2;
 
     return (
-        <View style={[styles.dialContainer, { width: size, height: size + 28 }]}>
-            <View style={[styles.dialRingOuter, { width: size, height: size, borderColor: 'rgba(255,255,255,0.08)' }]}>
-                {/* Arc Progress Indicator */}
+        <View style={[styles.dialContainer, { width: size, height: size + 34 }]}>
+            {/* Outer track ring */}
+            <View
+                style={[
+                    styles.dialTrack,
+                    { width: size, height: size, borderRadius: size / 2, borderWidth: strokeW, borderColor: 'rgba(255,255,255,0.10)' }
+                ]}
+            >
+                {/* Progress arc overlay */}
                 <View
                     style={[
-                        styles.dialArcFill,
+                        styles.dialArc,
                         {
-                            borderColor: color,
-                            borderTopColor: color,
-                            borderRightColor: pct > 35 ? color : 'transparent',
-                            borderBottomColor: pct > 65 ? color : 'transparent',
-                            borderLeftColor: pct > 85 ? color : 'transparent',
+                            width: size,
+                            height: size,
+                            borderRadius: size / 2,
+                            borderWidth: strokeW,
+                            borderTopColor: pct > 0 ? color : 'transparent',
+                            borderRightColor: pct > 25 ? color : 'transparent',
+                            borderBottomColor: pct > 50 ? color : 'transparent',
+                            borderLeftColor: pct > 75 ? color : 'transparent',
                         }
                     ]}
                 />
-                <View style={styles.dialContent}>
+                {/* Inner content */}
+                <View style={[styles.dialInner, { width: inner, height: inner, borderRadius: inner / 2 }]}>
                     <Text style={styles.dialIcon}>{icon}</Text>
                     <Text style={[styles.dialValue, { color: '#ffffff' }]}>{value}</Text>
                     {subValue ? (
@@ -52,7 +65,7 @@ export function CircularDial({
                     ) : null}
                 </View>
             </View>
-            <Text style={styles.dialLabel} numberOfLines={1}>{label}</Text>
+            <Text style={styles.dialLabel} numberOfLines={2}>{label}</Text>
         </View>
     );
 }
@@ -71,16 +84,20 @@ export function StarRating({ rating = 4, maxStars = 5, size = 20 }) {
     return <View style={styles.starRow}>{stars}</View>;
 }
 
-// ─── 3. Multi-Dimension Rest Balance (6+ Dimensiones) ─────────────────────────
+// ─── 3. Multi-Dimension Rest Balance — FIXED for React Native ─────────────────
+// RN does NOT support percentage widths on flex children in dynamic-width containers.
+// We use a two-View approach: fill + empty both use flex values.
+function clamp(v, lo = 0, hi = 100) { return Math.max(lo, Math.min(hi, Math.round(v || 0))); }
+
 export function DimensionsBalanceChart({ dimensions = {} }) {
     const dims = [
-        { key: 'duration', label: 'Duración', icon: '⏱️', val: dimensions.duration || 85, color: '#38bdf8' },
-        { key: 'deepSleep', label: 'Sueño Profundo', icon: '🌙', val: dimensions.deepSleep || 78, color: '#818cf8' },
-        { key: 'regularity', label: 'Regularidad', icon: '🔄', val: dimensions.regularity || 92, color: '#34d399' },
-        { key: 'efficiency', label: 'Eficiencia', icon: '🎯', val: dimensions.efficiency || 90, color: '#a78bfa' },
-        { key: 'cardioRecovery', label: 'Recuperación', icon: '🫀', val: dimensions.cardioRecovery || 84, color: '#f43f5e' },
-        { key: 'acousticPeace', label: 'Paz Acústica', icon: '😴', val: dimensions.acousticPeace || 88, color: '#fbbf24' },
-        { key: 'remSleep', label: 'Fase REM', icon: '🧠', val: dimensions.remSleep || 82, color: '#2dd4bf' }
+        { key: 'duration',       label: 'Duración',       icon: '⏱️', val: clamp(dimensions.duration       ?? 85), color: '#38bdf8' },
+        { key: 'deepSleep',      label: 'Sueño Profundo', icon: '🌙', val: clamp(dimensions.deepSleep      ?? 78), color: '#818cf8' },
+        { key: 'regularity',     label: 'Regularidad',    icon: '🔄', val: clamp(dimensions.regularity     ?? 92), color: '#34d399' },
+        { key: 'efficiency',     label: 'Eficiencia',     icon: '🎯', val: clamp(dimensions.efficiency     ?? 90), color: '#a78bfa' },
+        { key: 'cardioRecovery', label: 'Recuperación',   icon: '🫀', val: clamp(dimensions.cardioRecovery ?? 84), color: '#f43f5e' },
+        { key: 'acousticPeace', label: 'Paz Acústica',   icon: '😴', val: clamp(dimensions.acousticPeace  ?? 88), color: '#fbbf24' },
+        { key: 'remSleep',       label: 'Fase REM',       icon: '🧠', val: clamp(dimensions.remSleep       ?? 82), color: '#2dd4bf' },
     ];
 
     return (
@@ -94,13 +111,13 @@ export function DimensionsBalanceChart({ dimensions = {} }) {
                 {dims.map((d) => (
                     <View key={d.key} style={styles.dimItem}>
                         <View style={styles.dimLabelRow}>
-                            <Text style={styles.dimItemLabel}>
-                                {d.icon} {d.label}
-                            </Text>
+                            <Text style={styles.dimItemLabel}>{d.icon} {d.label}</Text>
                             <Text style={[styles.dimItemVal, { color: d.color }]}>{d.val}%</Text>
                         </View>
+                        {/* flex-row track: fill + empty = 100 */}
                         <View style={styles.dimBarBg}>
-                            <View style={[styles.dimBarFill, { width: `${d.val}%`, backgroundColor: d.color }]} />
+                            <View style={{ flex: d.val, backgroundColor: d.color, height: '100%', borderRadius: 3 }} />
+                            <View style={{ flex: 100 - d.val }} />
                         </View>
                     </View>
                 ))}
@@ -109,21 +126,42 @@ export function DimensionsBalanceChart({ dimensions = {} }) {
     );
 }
 
-// ─── 4. Hypnogram Multi-fase (Awake, REM, Light, Deep) ────────────────────────
+// ─── 4. Hypnogram Multi-fase — FIXED ─────────────────────────────────────────
+// Percentage-string heights don't work on RN flex children. We compute pixel heights.
 export function HypnogramChart({ sleepSummary = {}, sleepBreakdown = {} }) {
     const actual = sleepBreakdown.actualSleepMinutes || sleepSummary.durationMinutes || 460;
-    const awake = sleepBreakdown.awakeMinutes || sleepSummary.awakeMinutes || 35;
-    const deep = sleepBreakdown.deepSleepMinutes || sleepSummary.deepSleepMinutes || 105;
-    const rem = sleepBreakdown.remSleepMinutes || sleepSummary.remSleepMinutes || 92;
-    const light = sleepBreakdown.lightSleepMinutes || sleepSummary.lightSleepMinutes || (actual - deep - rem);
+    const awake  = sleepBreakdown.awakeMinutes       || sleepSummary.awakeMinutes    || 35;
+    const deep   = sleepBreakdown.deepSleepMinutes   || sleepSummary.deepSleepMinutes || 105;
+    const rem    = sleepBreakdown.remSleepMinutes    || sleepSummary.remSleepMinutes  || 92;
+    const light  = Math.max(0, actual - deep - rem);
 
-    const total = actual + awake;
-    const awakePct = Math.round((awake / total) * 100);
-    const remPct = Math.round((rem / total) * 100);
-    const lightPct = Math.round((light / total) * 100);
-    const deepPct = Math.round((deep / total) * 100);
+    const total    = actual + awake || 1;
+    const awakePct = Math.round((awake  / total) * 100);
+    const remPct   = Math.round((rem    / total) * 100);
+    const lightPct = Math.round((light  / total) * 100);
+    const deepPct  = Math.round((deep   / total) * 100);
 
     const fmtMin = (m) => `${Math.floor(m / 60)}h ${m % 60}m`;
+
+    // Fixed-height timeline: 52px total, bars bottom-aligned
+    const CHART_H = 52;
+    // Each segment [color, widthFlex, heightFrac]
+    const segs = [
+        { color: '#fb923c', flex: 1.5, hFrac: 0.28 },
+        { color: '#10b981', flex: 2.5, hFrac: 1.00 },
+        { color: '#c084fc', flex: 2.0, hFrac: 0.68 },
+        { color: '#38bdf8', flex: 2.5, hFrac: 0.55 },
+        { color: '#10b981', flex: 1.5, hFrac: 1.00 },
+        { color: '#c084fc', flex: 2.0, hFrac: 0.68 },
+        { color: '#fb923c', flex: 1.0, hFrac: 0.28 },
+    ];
+
+    const stageRows = [
+        { label: 'Despierto', color: '#fb923c', pct: awakePct, mins: awake  },
+        { label: 'REM',       color: '#c084fc', pct: remPct,   mins: rem    },
+        { label: 'Ligero',    color: '#38bdf8', pct: lightPct, mins: light  },
+        { label: 'Profundo',  color: '#10b981', pct: deepPct,  mins: deep   },
+    ];
 
     return (
         <View style={styles.hypnoCard}>
@@ -132,80 +170,47 @@ export function HypnogramChart({ sleepSummary = {}, sleepBreakdown = {} }) {
                 <Text style={styles.hypnoSub}>Desglose de ciclos ultradianos</Text>
             </View>
 
-            {/* Visual Timeline Hypnogram Layer */}
-            <View style={styles.timelineContainer}>
-                {/* Visual Stage Bars */}
-                <View style={styles.timelineBarStack}>
-                    <View style={[styles.timelineSlice, { flex: 1.5, backgroundColor: '#38bdf8', height: '60%' }]} />
-                    <View style={[styles.timelineSlice, { flex: 2.5, backgroundColor: '#10b981', height: '95%' }]} />
-                    <View style={[styles.timelineSlice, { flex: 2.0, backgroundColor: '#c084fc', height: '75%' }]} />
-                    <View style={[styles.timelineSlice, { flex: 2.5, backgroundColor: '#38bdf8', height: '60%' }]} />
-                    <View style={[styles.timelineSlice, { flex: 1.5, backgroundColor: '#10b981', height: '95%' }]} />
-                    <View style={[styles.timelineSlice, { flex: 2.0, backgroundColor: '#c084fc', height: '75%' }]} />
-                    <View style={[styles.timelineSlice, { flex: 1.0, backgroundColor: '#fb923c', height: '30%' }]} />
-                </View>
-                <View style={styles.timelineStageLabels}>
-                    <Text style={styles.stageAxisText}>Despierto</Text>
-                    <Text style={styles.stageAxisText}>REM</Text>
-                    <Text style={styles.stageAxisText}>Ligero</Text>
-                    <Text style={styles.stageAxisText}>Profundo</Text>
-                </View>
+            {/* Visual Bar Timeline — bottom-aligned with fixed pixel heights */}
+            <View style={{ height: CHART_H + 8, backgroundColor: '#0f172a', borderRadius: 10, paddingHorizontal: 6, paddingBottom: 4, marginBottom: 14, flexDirection: 'row', alignItems: 'flex-end', gap: 3 }}>
+                {segs.map((seg, i) => (
+                    <View
+                        key={i}
+                        style={{
+                            flex: seg.flex,
+                            height: Math.max(4, Math.round(CHART_H * seg.hFrac)),
+                            backgroundColor: seg.color,
+                            borderRadius: 3,
+                            opacity: 0.85,
+                        }}
+                    />
+                ))}
             </View>
 
-            {/* Stages Percentage and Durations List */}
+            {/* Stage rows — flex-based bars */}
             <View style={styles.stagesList}>
-                <View style={styles.stageRow}>
-                    <View style={styles.stageBadgeCol}>
-                        <View style={[styles.stageDot, { backgroundColor: '#fb923c' }]} />
-                        <Text style={styles.stageName}>Despierto</Text>
+                {stageRows.map((st) => (
+                    <View key={st.label} style={styles.stageRow}>
+                        <View style={styles.stageBadgeCol}>
+                            <View style={[styles.stageDot, { backgroundColor: st.color }]} />
+                            <Text style={styles.stageName}>{st.label}</Text>
+                        </View>
+                        <View style={styles.stageBarWrap}>
+                            <View style={{ flex: Math.max(1, st.pct), backgroundColor: st.color, height: '100%', borderRadius: 3 }} />
+                            <View style={{ flex: Math.max(1, 100 - st.pct) }} />
+                        </View>
+                        <Text style={styles.stageMetric}>{st.pct}% ({fmtMin(st.mins)})</Text>
                     </View>
-                    <View style={styles.stageBarWrap}>
-                        <View style={[styles.stageBar, { width: `${awakePct}%`, backgroundColor: '#fb923c' }]} />
-                    </View>
-                    <Text style={styles.stageMetric}>{awakePct}% ({fmtMin(awake)})</Text>
-                </View>
-
-                <View style={styles.stageRow}>
-                    <View style={styles.stageBadgeCol}>
-                        <View style={[styles.stageDot, { backgroundColor: '#c084fc' }]} />
-                        <Text style={styles.stageName}>REM</Text>
-                    </View>
-                    <View style={styles.stageBarWrap}>
-                        <View style={[styles.stageBar, { width: `${remPct}%`, backgroundColor: '#c084fc' }]} />
-                    </View>
-                    <Text style={styles.stageMetric}>{remPct}% ({fmtMin(rem)})</Text>
-                </View>
-
-                <View style={styles.stageRow}>
-                    <View style={styles.stageBadgeCol}>
-                        <View style={[styles.stageDot, { backgroundColor: '#38bdf8' }]} />
-                        <Text style={styles.stageName}>Ligero</Text>
-                    </View>
-                    <View style={styles.stageBarWrap}>
-                        <View style={[styles.stageBar, { width: `${lightPct}%`, backgroundColor: '#38bdf8' }]} />
-                    </View>
-                    <Text style={styles.stageMetric}>{lightPct}% ({fmtMin(light)})</Text>
-                </View>
-
-                <View style={styles.stageRow}>
-                    <View style={styles.stageBadgeCol}>
-                        <View style={[styles.stageDot, { backgroundColor: '#10b981' }]} />
-                        <Text style={styles.stageName}>Profundo</Text>
-                    </View>
-                    <View style={styles.stageBarWrap}>
-                        <View style={[styles.stageBar, { width: `${deepPct}%`, backgroundColor: '#10b981' }]} />
-                    </View>
-                    <Text style={styles.stageMetric}>{deepPct}% ({fmtMin(deep)})</Text>
-                </View>
+                ))}
             </View>
         </View>
     );
 }
 
-// ─── 5. Actigrafía y Traza Acústica ───────────────────────────────────────────
+// ─── 5. Actigrafía y Traza Acústica — FIXED heights ──────────────────────────
 export function ActigraphyChart({ snoreCount = 0, coughCount = 0 }) {
-    // Generate mountain/peaks actigraphy pattern
-    const peaks = [8, 14, 25, 42, 18, 12, 55, 68, 32, 19, 10, 14, 62, 85, 45, 20, 15, 30, 48, 22, 12];
+    const CHART_H = 60;
+    const peaks   = [8, 14, 25, 42, 18, 12, 55, 68, 32, 19, 10, 14, 62, 85, 45, 20, 15, 30, 48, 22, 12];
+    const maxPeak = Math.max(...peaks);
 
     return (
         <View style={styles.actCard}>
@@ -216,20 +221,22 @@ export function ActigraphyChart({ snoreCount = 0, coughCount = 0 }) {
                 </Text>
             </View>
 
-            <View style={styles.waveContainer}>
-                {peaks.map((h, i) => (
-                    <View
-                        key={i}
-                        style={[
-                            styles.waveBar,
-                            {
-                                height: `${h}%`,
+            <View style={[styles.waveContainer, { height: CHART_H }]}>
+                {peaks.map((h, i) => {
+                    const barH = Math.max(2, Math.round((h / maxPeak) * (CHART_H - 8)));
+                    return (
+                        <View
+                            key={i}
+                            style={{
+                                flex: 1,
+                                height: barH,
                                 backgroundColor: h > 60 ? '#f43f5e' : (h > 35 ? '#eab308' : '#10b981'),
-                                opacity: 0.85
-                            }
-                        ]}
-                    />
-                ))}
+                                borderRadius: 3,
+                                opacity: 0.85,
+                            }}
+                        />
+                    );
+                })}
             </View>
             <View style={styles.waveFooter}>
                 <Text style={styles.waveTime}>0:00</Text>
@@ -242,17 +249,21 @@ export function ActigraphyChart({ snoreCount = 0, coughCount = 0 }) {
     );
 }
 
-// ─── 6. Monitoreo Cardiovascular (HR, HRV SDANN, HRV Gain) ────────────────────
+// ─── 6. Monitoreo Cardiovascular — FIXED HR curve ────────────────────────────
+// Replaced broken absolute-position dots with proportional bottom-aligned bars.
 export function CardioChart({ cardiovascular = {} }) {
-    const avg = cardiovascular.avgHeartRate || 60;
-    const min = cardiovascular.minHeartRate || 51;
-    const max = cardiovascular.maxHeartRate || 76;
-    const hrv = cardiovascular.hrvSdann || 68;
-    const gain = cardiovascular.hrvGain !== undefined ? cardiovascular.hrvGain : 22;
+    const avg      = cardiovascular.avgHeartRate  || 60;
+    const min      = cardiovascular.minHeartRate  || 51;
+    const max      = cardiovascular.maxHeartRate  || 76;
+    const hrv      = cardiovascular.hrvSdann      || 68;
+    const gain     = cardiovascular.hrvGain !== undefined ? cardiovascular.hrvGain : 22;
     const recovery = cardiovascular.recoveryLevel || 'Excelente';
 
-    // Mock points for line
-    const points = [64, 61, 58, 54, 52, 51, 53, 56, 54, 52, 55, 59, 63];
+    const CHART_H = 60;
+    const points  = [64, 61, 58, 54, 52, 51, 53, 56, 54, 52, 55, 59, 63];
+    const minP    = Math.min(...points);
+    const maxP    = Math.max(...points);
+    const range   = (maxP - minP) || 1;
 
     return (
         <View style={styles.cardioCard}>
@@ -275,8 +286,8 @@ export function CardioChart({ cardiovascular = {} }) {
                     <Text style={styles.cMetricLabel}>FC Media</Text>
                 </View>
                 <View style={styles.cardioMetricBox}>
-                    <Text style={styles.cMetricVal}>{min} - {max} <Text style={styles.cMetricUnit}>bpm</Text></Text>
-                    <Text style={styles.cMetricLabel}>Mín - Máx</Text>
+                    <Text style={styles.cMetricVal}>{min} – {max} <Text style={styles.cMetricUnit}>bpm</Text></Text>
+                    <Text style={styles.cMetricLabel}>Mín – Máx</Text>
                 </View>
                 <View style={styles.cardioMetricBox}>
                     <Text style={styles.cMetricVal}>{hrv} <Text style={styles.cMetricUnit}>ms</Text></Text>
@@ -290,16 +301,19 @@ export function CardioChart({ cardiovascular = {} }) {
                 </View>
             </View>
 
-            {/* Curve Simulation */}
-            <View style={styles.hrCurveContainer}>
-                {points.map((p, idx) => (
-                    <View key={idx} style={styles.hrNodeCol}>
-                        <View style={[styles.hrNodeDot, { bottom: (p - 48) * 3 }]} />
-                        {idx % 3 === 0 && (
-                            <Text style={[styles.hrNodeLabel, { bottom: (p - 48) * 3 + 12 }]}>{p}</Text>
-                        )}
-                    </View>
-                ))}
+            {/* HR Curve — proportional bottom-aligned bars */}
+            <View style={[styles.hrCurveContainer, { height: CHART_H }]}>
+                {points.map((p, idx) => {
+                    const barH = Math.max(4, Math.round(((p - minP) / range) * (CHART_H - 10)) + 5);
+                    return (
+                        <View key={idx} style={{ flex: 1, alignItems: 'center', justifyContent: 'flex-end', height: CHART_H }}>
+                            <View style={{ width: 6, height: barH, backgroundColor: '#f43f5e', borderRadius: 3, opacity: 0.85 }} />
+                            {idx % 4 === 0 && (
+                                <Text style={styles.hrBarLabel}>{p}</Text>
+                            )}
+                        </View>
+                    );
+                })}
             </View>
             <Text style={styles.cardioFootnote}>
                 Ganancia de HRV al despertar (+{gain}%): indica transición autonómica favorable y recuperación física del sistema nervioso.
@@ -308,25 +322,27 @@ export function CardioChart({ cardiovascular = {} }) {
     );
 }
 
-// ─── 7. Tarjeta Resumen de los 3 Pilares de Salud ──────────────────────────────
+// ─── 7. Tarjeta Resumen de los 3 Pilares de Salud ─────────────────────────────
 export function ThreePillarsCard({ scoreData = {} }) {
-    const total = scoreData.totalScore || 85;
+    const total      = scoreData.totalScore      || 85;
     const regularity = scoreData.regularityScore || 90;
-    const duration = scoreData.durationScore || 82;
-    const quality = scoreData.qualityScore || 84;
-    const stars = scoreData.ratingStars || 4;
+    const duration   = scoreData.durationScore   || 82;
+    const quality    = scoreData.qualityScore    || 84;
+    const stars      = scoreData.ratingStars     || 4;
+
+    const scoreColor = total >= 85 ? '#34d399' : total >= 70 ? '#fbbf24' : '#f87171';
 
     return (
         <View style={styles.pillarsCard}>
             <View style={styles.scoreRow}>
-                <View style={styles.scoreBadge}>
-                    <Text style={styles.scoreBig}>{total}</Text>
-                    <Text style={styles.scoreScale}>/100</Text>
+                <View style={[styles.scoreBadge, { borderColor: scoreColor, borderWidth: 2 }]}>
+                    <Text style={[styles.scoreBig, { color: scoreColor }]}>{total}</Text>
+                    <Text style={[styles.scoreScale, { color: scoreColor + 'cc' }]}>/100</Text>
                 </View>
                 <View style={{ flex: 1, marginLeft: 14 }}>
                     <Text style={styles.scoreTitle}>Einsdream Score</Text>
                     <Text style={styles.scoreSubtitle}>
-                        {total >= 85 ? 'Óptima recuperación biológica' : 'Recuperación moderada'}
+                        {total >= 85 ? 'Óptima recuperación biológica' : total >= 70 ? 'Recuperación moderada' : 'Descanso deficiente'}
                     </Text>
                     <StarRating rating={stars} size={18} />
                 </View>
@@ -334,35 +350,24 @@ export function ThreePillarsCard({ scoreData = {} }) {
 
             {/* 3 Pillars Breakdown */}
             <View style={styles.pillarsContainer}>
-                {/* Pilar 1: Regularidad */}
-                <View style={styles.pillarBox}>
-                    <View style={styles.pillarHead}>
-                        <Text style={styles.pillarIcon}>🔄</Text>
-                        <Text style={styles.pillarName}>Regularidad</Text>
+                {[{ label: 'Regularidad', icon: '🔄', val: regularity, color: '#34d399', weight: '40% (Prioridad)' },
+                  { label: 'Duración',   icon: '⏱️', val: duration,   color: '#38bdf8', weight: '30%' },
+                  { label: 'Calidad',    icon: '⭐', val: quality,    color: '#fbbf24', weight: '30%' },
+                ].map((p) => (
+                    <View key={p.label} style={styles.pillarBox}>
+                        <View style={styles.pillarHead}>
+                            <Text style={styles.pillarIcon}>{p.icon}</Text>
+                            <Text style={styles.pillarName}>{p.label}</Text>
+                        </View>
+                        <Text style={[styles.pillarScore, { color: p.color }]}>{p.val}%</Text>
+                        <Text style={styles.pillarWeight}>Ponderación {p.weight}</Text>
+                        {/* flex-based mini progress bar */}
+                        <View style={styles.pillarBarBg}>
+                            <View style={{ flex: p.val, backgroundColor: p.color, height: '100%', borderRadius: 2 }} />
+                            <View style={{ flex: 100 - p.val }} />
+                        </View>
                     </View>
-                    <Text style={[styles.pillarScore, { color: '#34d399' }]}>{regularity}%</Text>
-                    <Text style={styles.pillarWeight}>Ponderación 40% (Prioridad)</Text>
-                </View>
-
-                {/* Pilar 2: Duración */}
-                <View style={styles.pillarBox}>
-                    <View style={styles.pillarHead}>
-                        <Text style={styles.pillarIcon}>⏱️</Text>
-                        <Text style={styles.pillarName}>Duración</Text>
-                    </View>
-                    <Text style={[styles.pillarScore, { color: '#38bdf8' }]}>{duration}%</Text>
-                    <Text style={styles.pillarWeight}>Ponderación 30%</Text>
-                </View>
-
-                {/* Pilar 3: Calidad */}
-                <View style={styles.pillarBox}>
-                    <View style={styles.pillarHead}>
-                        <Text style={styles.pillarIcon}>⭐</Text>
-                        <Text style={styles.pillarName}>Calidad</Text>
-                    </View>
-                    <Text style={[styles.pillarScore, { color: '#fbbf24' }]}>{quality}%</Text>
-                    <Text style={styles.pillarWeight}>Ponderación 30%</Text>
-                </View>
+                ))}
             </View>
         </View>
     );
@@ -372,47 +377,45 @@ export function ThreePillarsCard({ scoreData = {} }) {
 const styles = StyleSheet.create({
     dialContainer: {
         alignItems: 'center',
-        marginHorizontal: 4,
+        marginHorizontal: 5,
     },
-    dialRingOuter: {
-        borderRadius: 999,
-        borderWidth: 4,
+    dialTrack: {
         alignItems: 'center',
         justifyContent: 'center',
-        position: 'relative',
         backgroundColor: '#0f172a',
+        position: 'relative',
     },
-    dialArcFill: {
+    dialArc: {
         position: 'absolute',
-        width: '100%',
-        height: '100%',
-        borderRadius: 999,
-        borderWidth: 4,
+        top: 0,
+        left: 0,
     },
-    dialContent: {
+    dialInner: {
+        backgroundColor: '#0f172a',
         alignItems: 'center',
         justifyContent: 'center',
     },
     dialIcon: {
-        fontSize: 12,
+        fontSize: 11,
         marginBottom: 1,
     },
     dialValue: {
-        fontSize: 15,
+        fontSize: 14,
         fontWeight: '900',
-        letterSpacing: 0.3,
+        letterSpacing: 0.2,
     },
     dialSubValue: {
-        fontSize: 10,
+        fontSize: 9,
         fontWeight: '700',
         marginTop: 1,
     },
     dialLabel: {
-        fontSize: 11,
+        fontSize: 10,
         fontWeight: '700',
         color: '#94a3b8',
-        marginTop: 6,
+        marginTop: 5,
         textAlign: 'center',
+        maxWidth: 84,
     },
 
     starRow: {
@@ -463,10 +466,11 @@ const styles = StyleSheet.create({
         fontWeight: '800',
     },
     dimBarBg: {
-        height: 6,
+        height: 7,
         backgroundColor: '#334155',
-        borderRadius: 3,
+        borderRadius: 4,
         overflow: 'hidden',
+        flexDirection: 'row',
     },
     dimBarFill: {
         height: '100%',
@@ -549,11 +553,12 @@ const styles = StyleSheet.create({
     },
     stageBarWrap: {
         flex: 1,
-        height: 6,
+        height: 7,
         backgroundColor: '#334155',
-        borderRadius: 3,
+        borderRadius: 4,
         marginHorizontal: 10,
         overflow: 'hidden',
+        flexDirection: 'row',
     },
     stageBar: {
         height: '100%',
@@ -592,14 +597,14 @@ const styles = StyleSheet.create({
         fontWeight: '700',
     },
     waveContainer: {
-        height: 60,
         backgroundColor: '#0f172a',
         borderRadius: 10,
         flexDirection: 'row',
         alignItems: 'flex-end',
         justifyContent: 'space-between',
-        paddingHorizontal: 10,
+        paddingHorizontal: 6,
         paddingBottom: 4,
+        gap: 2,
     },
     waveBar: {
         width: 6,
@@ -676,33 +681,21 @@ const styles = StyleSheet.create({
         marginTop: 2,
     },
     hrCurveContainer: {
-        height: 60,
         backgroundColor: '#0f172a',
         borderRadius: 10,
-        position: 'relative',
         flexDirection: 'row',
-        justifyContent: 'space-between',
-        paddingHorizontal: 8,
+        alignItems: 'flex-end',
+        paddingHorizontal: 4,
+        paddingBottom: 4,
         marginBottom: 8,
+        gap: 2,
     },
-    hrNodeCol: {
-        width: 12,
-        height: '100%',
-        position: 'relative',
-        alignItems: 'center',
-    },
-    hrNodeDot: {
-        position: 'absolute',
-        width: 6,
-        height: 6,
-        borderRadius: 3,
-        backgroundColor: '#f43f5e',
-    },
-    hrNodeLabel: {
-        position: 'absolute',
+    hrBarLabel: {
         fontSize: 8,
         color: '#f87171',
         fontWeight: '700',
+        marginTop: 2,
+        textAlign: 'center',
     },
     cardioFootnote: {
         fontSize: 10,
@@ -728,21 +721,18 @@ const styles = StyleSheet.create({
         width: 72,
         height: 72,
         borderRadius: 20,
-        backgroundColor: '#3b82f6',
+        backgroundColor: 'transparent',
         alignItems: 'center',
         justifyContent: 'center',
-        elevation: 6,
     },
     scoreBig: {
         fontSize: 28,
         fontWeight: '900',
-        color: '#ffffff',
         lineHeight: 32,
     },
     scoreScale: {
         fontSize: 10,
         fontWeight: '700',
-        color: 'rgba(255,255,255,0.8)',
     },
     scoreTitle: {
         fontSize: 17,
@@ -790,5 +780,15 @@ const styles = StyleSheet.create({
         fontSize: 8,
         color: '#64748b',
         textAlign: 'center',
+        marginBottom: 4,
+    },
+    pillarBarBg: {
+        height: 4,
+        backgroundColor: '#334155',
+        borderRadius: 2,
+        overflow: 'hidden',
+        flexDirection: 'row',
+        width: '100%',
+        marginTop: 2,
     },
 });
