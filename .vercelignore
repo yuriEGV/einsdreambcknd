@@ -1,4 +1,6 @@
 mobile-app
 .github
+scripts
+*.md
 *.log
 node_modules
