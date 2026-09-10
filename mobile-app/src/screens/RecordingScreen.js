@@ -1410,7 +1410,7 @@ export default function RecordingScreen({ token, onLogout }) {
                             </Text>
                         </View>
                     ) : (
-                    {localRecordings.map((rec) => {
+                        localRecordings.map((rec) => {
                             const isSelected = playingUri === rec.uri;
                             const isThisPlaying = isSelected && playing;
                             const isUploaded = uploadedIds.has(rec.id);
@@ -1491,7 +1491,7 @@ export default function RecordingScreen({ token, onLogout }) {
                                     </TouchableOpacity>
                                 </View>
                             );
-                        })}
+                        })
                     )}
                 </View>
             )}
