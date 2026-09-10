@@ -33,10 +33,15 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-// Specific handler for versioned APK downloads
-app.get(['/public/einsdream-mobile-v2.2.0.apk', '/public/einsdream-mobile-v2.1.1.apk', '/public/einsdream-mobile-v2.1.0.apk'], (req, res) => {
+// Specific handler for versioned APK downloads (all versions redirect to the current APK file)
+app.get([
+  '/public/einsdream-mobile-v2.3.0.apk',
+  '/public/einsdream-mobile-v2.2.0.apk',
+  '/public/einsdream-mobile-v2.1.1.apk',
+  '/public/einsdream-mobile-v2.1.0.apk'
+], (req, res) => {
   const apkPath = path.join(__dirname, '../public/einsdream-mobile.apk');
-  res.download(apkPath, 'einsdream-mobile-v2.2.0.apk');
+  res.download(apkPath, 'einsdream-mobile-v2.3.0.apk');
 });
 
 // Serve static files from the public directory
@@ -49,11 +54,31 @@ app.get(['/download/apk', '/download/apk/:version'], (req, res) => {
   res.setHeader('Expires', '0');
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
   const apkPath = path.join(__dirname, '../public/einsdream-mobile.apk');
-  const targetFilename = req.params.version ? `einsdream-mobile-v${req.params.version}.apk` : 'einsdream-mobile-v2.2.0.apk';
+  const targetFilename = req.params.version
+    ? `einsdream-mobile-v${req.params.version}.apk`
+    : 'einsdream-mobile-v2.3.0.apk';
   res.download(apkPath, targetFilename, (err) => {
     if (err && !res.headersSent) {
       res.redirect('/public/einsdream-mobile.apk');
     }
+  });
+});
+
+// App version info endpoint — used by the admin panel to show the current APK version
+app.get('/api/app-version', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.json({
+    version: '2.3.0',
+    versionCode: 6,
+    apkUrl: '/download/apk',
+    apkFilename: 'einsdream-mobile-v2.3.0.apk',
+    releaseDate: '2026-09-10',
+    changelog: [
+      'Controles de audio con barra de progreso táctil y botones ±10s',
+      'Grabación con pre-buffer 5s + post-buffer 15s (~20s por evento)',
+      'Gráficos de sueño corregidos para iOS y Android',
+      'Compatibilidad mejorada con iPhone (interruptionModeIOS)',
+    ]
   });
 });
 
@@ -93,7 +118,9 @@ app.get('/', async (req, res) => {
   res.json({
     status: 'ONLINE',
     message: 'Einsdream Backend API is running',
-    version: '2.2.0',
+    version: '2.3.0',
+    apkVersion: '2.3.0',
+    apkUrl: '/download/apk',
     dbStatus: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
     dbError: lastDbError,
     timestamp: new Date().toISOString()
