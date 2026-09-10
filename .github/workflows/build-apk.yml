@@ -10,7 +10,7 @@ on:
 
 jobs:
   build-apk:
-    name: Build Einsdream APK v2.3.0
+    name: Build Einsdream APK v2.3.1
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -41,7 +41,7 @@ jobs:
         run: |
           npm install
 
-      - name: Bundle Official Expo Hermes Bytecode v2.3.0
+      - name: Bundle Official Expo Hermes Bytecode v2.3.1
         working-directory: mobile-app
         run: |
           mkdir -p ../public/assets
@@ -82,8 +82,8 @@ jobs:
           # 3. Remove old signature files ONLY (never touch META-INF/services!)
           zip -d einsdream-mobile.apk "META-INF/*.SF" "META-INF/*.RSA" "META-INF/*.DSA" 2>/dev/null || true
           
-          # 4. Create keystore
-          keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Einsdream,O=Einsdream,C=CL"
+          # 4. Use permanent keystore to guarantee consistent signatures for update-in-place
+          cp ../scripts/debug.keystore debug.keystore
           
           # 5. Zipalign
           "$BUILD_TOOLS/zipalign" -f -v 4 einsdream-mobile.apk einsdream-mobile-aligned.apk
@@ -107,15 +107,15 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # Copy versioned copy
-          cp public/einsdream-mobile.apk public/einsdream-mobile-v2.3.0.apk
-          git add public/einsdream-mobile.apk public/einsdream-mobile-v2.3.0.apk
+          cp public/einsdream-mobile.apk public/einsdream-mobile-v2.3.1.apk
+          git add public/einsdream-mobile.apk public/einsdream-mobile-v2.3.1.apk
           # Always commit (--allow-empty handles case where binary is identical)
-          git commit --allow-empty -m "chore(apk): update einsdream-mobile.apk Hermes bytecode v2.3.0 [skip actions]"
+          git commit --allow-empty -m "chore(apk): update einsdream-mobile.apk Hermes bytecode v2.3.1 [skip actions]"
           git push origin main
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: einsdream-mobile-v2.3.0
+          name: einsdream-mobile-v2.3.1
           path: public/einsdream-mobile.apk
           retention-days: 30

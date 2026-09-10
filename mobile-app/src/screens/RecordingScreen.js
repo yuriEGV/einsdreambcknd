@@ -1,5 +1,5 @@
 /**
- * RecordingScreen.js - EinsDream 2026 v2.3.0
+ * RecordingScreen.js - EinsDream 2026 v2.3.1
  *
  * Sistema Inteligente de Monitoreo Nocturno, Motor Einsdream Score y Análisis Predictivo
  *
@@ -37,7 +37,7 @@ import {
     ActivityIndicator,
     Button,
 } from 'react-native';
-import { Audio } from 'expo-av';
+import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import axios from 'axios';
 import CONFIG from '../config';
@@ -258,8 +258,8 @@ export default function RecordingScreen({ token, onLogout }) {
                 shouldDuckAndroid: true,
                 playThroughEarpieceAndroid: false,
                 // iOS: keep recording mode active
-                interruptionModeIOS: Audio.INTERRUPTION_MODE_IOS_DO_NOT_MIX,
-                interruptionModeAndroid: Audio.INTERRUPTION_MODE_ANDROID_DO_NOT_MIX,
+                interruptionModeIOS: InterruptionModeIOS?.DoNotMix ?? 1,
+                interruptionModeAndroid: InterruptionModeAndroid?.DoNotMix ?? 1,
             });
         } catch (e) {
             console.warn('[setupAudioMode]', e.message);
@@ -461,6 +461,55 @@ export default function RecordingScreen({ token, onLogout }) {
                 });
             }
 
+            // Sincronizar y recuperar grabaciones históricas desde la nube
+            if (token) {
+                try {
+                    const cloudRes = await axios.get(`${API_URL}/sessions/me?limit=50`, {
+                        headers: { Authorization: `Bearer ${token}` },
+                        timeout: 6000,
+                    });
+                    const cloudSessions = cloudRes.data?.sessions || [];
+                    const cloudUploadedSet = new Set();
+
+                    for (const cs of cloudSessions) {
+                        const cloudKey = cs.storageKey || cs.s3Key || cs.filename || `cloud_${cs._id}.m4a`;
+                        const baseName = cloudKey.split('/').pop().split('\\').pop();
+                        cloudUploadedSet.add(baseName);
+                        cloudUploadedSet.add(cs._id);
+
+                        const alreadyInList = list.some(
+                            (r) => r.filename === baseName || r.id === baseName || r.id === cs._id
+                        );
+                        if (!alreadyInList) {
+                            const streamUri = `${API_URL}/sessions/${cs._id}/stream`;
+                            list.push({
+                                id: cs._id,
+                                filename: baseName,
+                                cloudId: cs._id,
+                                uri: streamUri,
+                                label: cs.label || `☁️ ${cs.eventType === 'ronquido' ? 'Ronquido' : cs.eventType === 'tos' ? 'Tos' : cs.eventType || 'Audio guardado'}`,
+                                eventType: cs.eventType || 'auto-agent',
+                                confidence: cs.confidence || 90,
+                                intensityDb: cs.intensityDb || -30,
+                                sizeBytes: cs.duration ? Math.round(cs.duration * 12000) : 48000,
+                                sizeKb: cs.duration ? Math.round(cs.duration * 12) : 48,
+                                modTime: new Date(cs.detectedAt || cs.createdAt).getTime(),
+                                dateStr: new Date(cs.detectedAt || cs.createdAt).toLocaleTimeString('es-CL', {
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                    second: '2-digit',
+                                }),
+                                isCloud: true,
+                            });
+                        }
+                    }
+
+                    setUploadedIds((prev) => new Set([...prev, ...cloudUploadedSet]));
+                } catch (cloudErr) {
+                    console.warn('[refreshRecordings cloud sync]', cloudErr.message);
+                }
+            }
+
             list.sort((a, b) => b.modTime - a.modTime);
 
             // Memoria Protegida: 100 MB FIFO
@@ -512,12 +561,16 @@ export default function RecordingScreen({ token, onLogout }) {
                     staysActiveInBackground: false,
                     shouldDuckAndroid: false,
                     playThroughEarpieceAndroid: false,
-                    interruptionModeIOS: Audio.INTERRUPTION_MODE_IOS_DO_NOT_MIX,
-                    interruptionModeAndroid: Audio.INTERRUPTION_MODE_ANDROID_DO_NOT_MIX,
+                    interruptionModeIOS: InterruptionModeIOS?.DoNotMix ?? 1,
+                    interruptionModeAndroid: InterruptionModeAndroid?.DoNotMix ?? 1,
                 });
 
+                const source = rec.isCloud && token
+                    ? { uri: rec.uri, headers: { Authorization: `Bearer ${token}` } }
+                    : { uri: rec.uri };
+
                 const { sound } = await Audio.Sound.createAsync(
-                    { uri: rec.uri },
+                    source,
                     { shouldPlay: true, progressUpdateIntervalMillis: 150 },
                     (status) => {
                         if (status.isLoaded) {
@@ -582,13 +635,15 @@ export default function RecordingScreen({ token, onLogout }) {
                 style: 'destructive',
                 onPress: async () => {
                     if (playingUri === rec.uri) await unloadSound();
-                    try {
-                        await FileSystem.deleteAsync(rec.uri, { idempotent: true });
-                        const meta = await loadMetadataIndex();
-                        delete meta[rec.filename];
-                        await saveMetadataIndex(meta);
-                    } catch (_) {}
-                    refreshRecordings();
+                    if (rec.uri && !rec.isCloud) {
+                        try {
+                            await FileSystem.deleteAsync(rec.uri, { idempotent: true });
+                            const meta = await loadMetadataIndex();
+                            delete meta[rec.filename];
+                            await saveMetadataIndex(meta);
+                        } catch (_) {}
+                    }
+                    setLocalRecordings((prev) => prev.filter((r) => r.id !== rec.id));
                 },
             },
         ]);
@@ -769,8 +824,8 @@ export default function RecordingScreen({ token, onLogout }) {
                 staysActiveInBackground: true,
                 shouldDuckAndroid: true,
                 playThroughEarpieceAndroid: false,
-                interruptionModeIOS: Audio.INTERRUPTION_MODE_IOS_DO_NOT_MIX,
-                interruptionModeAndroid: Audio.INTERRUPTION_MODE_ANDROID_DO_NOT_MIX,
+                interruptionModeIOS: InterruptionModeIOS?.DoNotMix ?? 1,
+                interruptionModeAndroid: InterruptionModeAndroid?.DoNotMix ?? 1,
             });
 
             if (listenerRecRef.current) {
@@ -917,8 +972,8 @@ export default function RecordingScreen({ token, onLogout }) {
                 staysActiveInBackground: false,
                 shouldDuckAndroid: true,
                 playThroughEarpieceAndroid: false,
-                interruptionModeIOS: Audio.INTERRUPTION_MODE_IOS_DO_NOT_MIX,
-                interruptionModeAndroid: Audio.INTERRUPTION_MODE_ANDROID_DO_NOT_MIX,
+                interruptionModeIOS: InterruptionModeIOS?.DoNotMix ?? 1,
+                interruptionModeAndroid: InterruptionModeAndroid?.DoNotMix ?? 1,
             });
 
             const { recording } = await Audio.Recording.createAsync(RECORDING_OPTIONS);
@@ -1008,7 +1063,7 @@ export default function RecordingScreen({ token, onLogout }) {
             <View style={s.topHeader}>
                 <Text style={s.mainAppTitle}>EinsDream</Text>
                 <View style={s.versionBadge}>
-                    <Text style={s.versionText}>v2.3.0 (Estable)</Text>
+                    <Text style={s.versionText}>v2.3.1 (Estable)</Text>
                 </View>
             </View>
 
