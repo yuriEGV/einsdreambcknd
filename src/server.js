@@ -35,6 +35,7 @@ app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 // Specific handler for versioned APK downloads (all versions redirect to the current APK file)
 app.get([
+  '/public/einsdream-mobile-v2.3.2.apk',
   '/public/einsdream-mobile-v2.3.1.apk',
   '/public/einsdream-mobile-v2.3.0.apk',
   '/public/einsdream-mobile-v2.2.0.apk',
@@ -42,7 +43,7 @@ app.get([
   '/public/einsdream-mobile-v2.1.0.apk'
 ], (req, res) => {
   const apkPath = path.join(__dirname, '../public/einsdream-mobile.apk');
-  res.download(apkPath, 'einsdream-mobile-v2.3.1.apk');
+  res.download(apkPath, 'einsdream-mobile-v2.3.2.apk');
 });
 
 // Serve static files from the public directory
@@ -57,7 +58,7 @@ app.get(['/download/apk', '/download/apk/:version'], (req, res) => {
   const apkPath = path.join(__dirname, '../public/einsdream-mobile.apk');
   const targetFilename = req.params.version
     ? `einsdream-mobile-v${req.params.version}.apk`
-    : 'einsdream-mobile-v2.3.1.apk';
+    : 'einsdream-mobile-v2.3.2.apk';
   res.download(apkPath, targetFilename, (err) => {
     if (err && !res.headersSent) {
       res.redirect('/public/einsdream-mobile.apk');
@@ -69,17 +70,16 @@ app.get(['/download/apk', '/download/apk/:version'], (req, res) => {
 app.get('/api/app-version', (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.json({
-    version: '2.3.1',
-    versionCode: 7,
+    version: '2.3.2',
+    versionCode: 8,
     apkUrl: '/download/apk',
-    apkFilename: 'einsdream-mobile-v2.3.1.apk',
-    releaseDate: '2026-09-10',
+    apkFilename: 'einsdream-mobile-v2.3.2.apk',
+    releaseDate: '2026-09-11',
     changelog: [
-      'Solución al error interruptionModeIOS en pruebas y monitoreo de audio',
-      'Recuperación automática de audios históricos grabados desde la nube',
-      'Firma criptográfica permanente para actualización directa sin desinstalación',
-      'Controles interactivos de reproducción de audio y saltos ±10s',
-      'Grabación con pre-buffer 5s + post-buffer 15s',
+      'Solución integral a reproducción de audio y errores ExoPlayer con caché local',
+      'Nueva sincronización en bloque de grabaciones pendientes desde el celular a la nube',
+      'Calibración acústica para detección precisa de voz y habla humana',
+      'Normalización de gráficos de dispersión acústica y política de retención de 5 días',
     ]
   });
 });
