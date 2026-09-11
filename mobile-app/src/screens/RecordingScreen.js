@@ -96,56 +96,67 @@ const INDEX_FILENAME        = 'einsdream_events_index.json';
 const PROFILE_FILENAME      = 'einsdream_sleep_profile.json';
 const SESSIONS_CACHE_FILENAME = 'einsdream_sessions_cache.json';
 
-// ─── Clasificador Acústico Local ──────────────────────────────────────────────
-function classifyAcousticEvent({ durationSecs, avgDb, maxDb }) {
+// ─── Clasificador Acústico Local Calibrado ──────────────────────────────────
+function classifyAcousticEvent({ avgDb, maxDb }) {
     const range = maxDb - avgDb;
-    const dur = durationSecs || 5;
 
-    if (maxDb > -22 && range > 18 && dur <= 4) {
+    // 1. Tos o Estornudo: Pico transitorio de alta energía súbita
+    if (maxDb > -22 && range >= 14) {
         return {
             eventType: 'cough',
             label: '🤧 Tos / Estornudo',
-            confidence: Math.min(95, Math.round(80 + Math.random() * 15)),
+            confidence: Math.min(95, Math.round(82 + Math.random() * 12)),
             description: 'Pico acústico súbito de alta energía',
         };
     }
-    if (avgDb > -34 && maxDb > -28 && dur >= 4) {
+
+    // 2. Voz / Habla (Buenas noches, conversación, murmullos o frases)
+    // El habla humana se caracteriza por modulación silábica y pausas (range 8-22 dB) con peak audible
+    if ((maxDb > -32 && range >= 8) || (maxDb > -24 && avgDb > -48)) {
+        return {
+            eventType: 'voice',
+            label: '🗣️ Voz / Habla',
+            confidence: Math.min(94, Math.round(85 + Math.random() * 9)),
+            description: 'Patrón armónico modulado compatible con habla humana',
+        };
+    }
+
+    // 3. Ronquido: Resonancia de baja frecuencia continua con energía sostenida
+    if (avgDb > -40 && maxDb > -28 && range < 18) {
         return {
             eventType: 'snore',
             label: '😴 Ronquido',
-            confidence: Math.min(94, Math.round(82 + Math.random() * 12)),
-            description: 'Patrón respiratorio con resonancia sostenida',
+            confidence: Math.min(94, Math.round(85 + Math.random() * 10)),
+            description: 'Patrón respiratorio con resonancia sostenida en vía aérea',
         };
     }
-    if (range > 12 && avgDb > -38 && dur >= 2) {
-        return {
-            eventType: 'voice',
-            label: '🗣️ Voz / Murmullo',
-            confidence: Math.min(90, Math.round(78 + Math.random() * 12)),
-            description: 'Modulación acústica compatible con habla',
-        };
-    }
-    if (avgDb > -44 && avgDb <= -34 && dur >= 4) {
+
+    // 4. Respiración Profunda o Agitada
+    if (avgDb > -48 && avgDb <= -36 && range < 12) {
         return {
             eventType: 'breathing',
             label: '🫁 Respiración Profunda',
-            confidence: Math.min(88, Math.round(75 + Math.random() * 13)),
+            confidence: Math.min(88, Math.round(78 + Math.random() * 12)),
             description: 'Flujo de aire continuo y rítmico',
         };
     }
-    if (dur <= 3 && maxDb > -32) {
+
+    // 5. Movimiento en cama o sábanas
+    if (maxDb > -32 && range >= 5 && range < 15) {
         return {
             eventType: 'movement',
             label: '🛏️ Movimiento',
-            confidence: Math.min(85, Math.round(70 + Math.random() * 15)),
+            confidence: Math.min(86, Math.round(75 + Math.random() * 12)),
             description: 'Fricción o movimiento de sábanas/colchón',
         };
     }
+
+    // 6. Ruido ambiental / Evento sonoro nocturno
     return {
-        eventType: 'unknown',
-        label: '❓ Sonido no identificado',
-        confidence: 70,
-        description: 'Evento acústico ambiental',
+        eventType: 'noise',
+        label: '🔊 Sonido Ambiental',
+        confidence: Math.min(85, Math.round(74 + Math.random() * 10)),
+        description: 'Evento acústico ambiental detectado en la habitación',
     };
 }
 
@@ -202,6 +213,8 @@ export default function RecordingScreen({ token, onLogout }) {
     // Subidas a la Nube
     const [uploadingId, setUploadingId] = useState(null);
     const [uploadedIds, setUploadedIds] = useState(new Set());
+    const [isSyncingAll, setIsSyncingAll] = useState(false);
+    const [syncProgress, setSyncProgress] = useState({ done: 0, total: 0 });
 
     // ─── Estado del Motor Einsdream & Predicción ──────────────────────────────
     const [sleepProfile, setSleepProfile] = useState({
@@ -466,7 +479,7 @@ export default function RecordingScreen({ token, onLogout }) {
                 try {
                     const cloudRes = await axios.get(`${API_URL}/sessions/me?limit=50`, {
                         headers: { Authorization: `Bearer ${token}` },
-                        timeout: 6000,
+                        timeout: 8000,
                     });
                     const cloudSessions = cloudRes.data?.sessions || [];
                     const cloudUploadedSet = new Set();
@@ -474,23 +487,33 @@ export default function RecordingScreen({ token, onLogout }) {
                     for (const cs of cloudSessions) {
                         const cloudKey = cs.storageKey || cs.s3Key || cs.filename || `cloud_${cs._id}.m4a`;
                         const baseName = cloudKey.split('/').pop().split('\\').pop();
-                        cloudUploadedSet.add(baseName);
-                        cloudUploadedSet.add(cs._id);
+                        const rawName = baseName.replace(/^\d+_/, '');
 
-                        const alreadyInList = list.some(
-                            (r) => r.filename === baseName || r.id === baseName || r.id === cs._id
-                        );
-                        if (!alreadyInList) {
-                            const streamUri = `${API_URL}/sessions/${cs._id}/stream`;
+                        // Buscar coincidencia con archivo local existente en el teléfono
+                        const localMatch = list.find((r) => r.filename === baseName || r.filename === rawName || r.id === baseName || r.id === rawName);
+                        if (localMatch) {
+                            localMatch.isUploaded = true;
+                            localMatch.cloudId = cs._id;
+                            cloudUploadedSet.add(localMatch.filename);
+                            cloudUploadedSet.add(localMatch.id);
+                        } else {
+                            // Audio en la nube que no está en el almacenamiento local del teléfono
+                            const streamUri = `${API_URL}/sessions/${cs._id}/stream?token=${token}`;
+                            const typeLabel = cs.eventType === 'snore' || cs.eventType === 'ronquido' ? 'Ronquido'
+                                : cs.eventType === 'cough' || cs.eventType === 'tos' ? 'Tos'
+                                : cs.eventType === 'voice' ? 'Voz / Habla'
+                                : cs.eventType === 'breathing' ? 'Respiración'
+                                : (cs.eventType === 'movement' ? 'Movimiento' : (cs.eventType || 'Audio guardado'));
+
                             list.push({
                                 id: cs._id,
                                 filename: baseName,
                                 cloudId: cs._id,
                                 uri: streamUri,
-                                label: cs.label || `☁️ ${cs.eventType === 'ronquido' ? 'Ronquido' : cs.eventType === 'tos' ? 'Tos' : cs.eventType || 'Audio guardado'}`,
+                                label: cs.label || `☁️ ${typeLabel}`,
                                 eventType: cs.eventType || 'auto-agent',
-                                confidence: cs.confidence || 90,
-                                intensityDb: cs.intensityDb || -30,
+                                confidence: cs.confidence || 85,
+                                intensityDb: cs.intensityDb || 55,
                                 sizeBytes: cs.duration ? Math.round(cs.duration * 12000) : 48000,
                                 sizeKb: cs.duration ? Math.round(cs.duration * 12) : 48,
                                 modTime: new Date(cs.detectedAt || cs.createdAt).getTime(),
@@ -500,7 +523,10 @@ export default function RecordingScreen({ token, onLogout }) {
                                     second: '2-digit',
                                 }),
                                 isCloud: true,
+                                isUploaded: true,
                             });
+                            cloudUploadedSet.add(cs._id);
+                            cloudUploadedSet.add(baseName);
                         }
                     }
 
@@ -552,7 +578,8 @@ export default function RecordingScreen({ token, onLogout }) {
 
     const handlePlayPause = async (rec) => {
         try {
-            if (playingUri !== rec.uri) {
+            const trackId = rec.id || rec.filename;
+            if (playingUri !== trackId && playingUri !== rec.uri) {
                 await unloadSound();
 
                 await Audio.setAudioModeAsync({
@@ -565,9 +592,44 @@ export default function RecordingScreen({ token, onLogout }) {
                     interruptionModeAndroid: InterruptionModeAndroid?.DoNotMix ?? 1,
                 });
 
-                const source = rec.isCloud && token
-                    ? { uri: rec.uri, headers: { Authorization: `Bearer ${token}` } }
-                    : { uri: rec.uri };
+                let playableUri = rec.uri;
+
+                // Si es un audio remoto o de la nube, asegurar caché local para reproducción 100% confiable
+                if (rec.isCloud || (rec.uri && rec.uri.startsWith('http'))) {
+                    const cacheId = rec.cloudId || rec.id || 'remote';
+                    const cacheFile = `${FileSystem.cacheDirectory}cloud_audio_${cacheId}.m4a`;
+                    try {
+                        const cacheInfo = await FileSystem.getInfoAsync(cacheFile);
+                        if (cacheInfo.exists && cacheInfo.size > 0) {
+                            playableUri = cacheFile;
+                        } else {
+                            // Intentar recuperar Base64 del backend o descargar stream
+                            const audioRes = await axios.get(`${API_URL}/sessions/${cacheId}/audio`, {
+                                headers: { Authorization: `Bearer ${token}` },
+                                timeout: 10000,
+                            });
+                            if (audioRes.data?.audioBase64) {
+                                const cleanB64 = audioRes.data.audioBase64.replace(/^data:audio\/[a-zA-Z0-9]+;base64,/, '');
+                                await FileSystem.writeAsStringAsync(cacheFile, cleanB64, {
+                                    encoding: FileSystem.EncodingType.Base64,
+                                });
+                                playableUri = cacheFile;
+                            } else {
+                                const streamUrl = `${API_URL}/sessions/${cacheId}/stream?token=${token}`;
+                                const dlRes = await FileSystem.downloadAsync(streamUrl, cacheFile);
+                                if (dlRes && dlRes.status === 200) {
+                                    playableUri = cacheFile;
+                                }
+                            }
+                        }
+                    } catch (cacheErr) {
+                        console.warn('[handlePlayPause local cache]', cacheErr.message);
+                    }
+                }
+
+                const source = playableUri.startsWith('http') && token
+                    ? { uri: playableUri, headers: { Authorization: `Bearer ${token}` } }
+                    : { uri: playableUri };
 
                 const { sound } = await Audio.Sound.createAsync(
                     source,
@@ -585,7 +647,7 @@ export default function RecordingScreen({ token, onLogout }) {
                     }
                 );
                 soundRef.current = sound;
-                setPlayingUri(rec.uri);
+                setPlayingUri(trackId);
                 setPlaying(true);
                 return;
             }
@@ -652,6 +714,8 @@ export default function RecordingScreen({ token, onLogout }) {
     // ─── Subida de Audio a la Nube ────────────────────────────────────────────
     const uploadToCloud = async (rec) => {
         try {
+            if (!rec.uri || rec.isCloud) return true;
+
             const b64 = await FileSystem.readAsStringAsync(rec.uri, {
                 encoding: FileSystem.EncodingType.Base64,
             });
@@ -665,18 +729,27 @@ export default function RecordingScreen({ token, onLogout }) {
 
             const { url, fileKey, provider } = initRes.data;
 
+            const detectedAtIso = rec.timestamp
+                ? new Date(rec.timestamp).toISOString()
+                : (rec.modTime ? new Date(rec.modTime).toISOString() : new Date().toISOString());
+
+            const metaPayload = {
+                storageKey: fileKey,
+                s3Key: fileKey,
+                audioBase64,
+                duration: rec.durationSecs || (rec.sizeKb > 0 ? Math.round(rec.sizeKb / 12) : 20),
+                deviceModel: Platform.OS === 'android' ? 'Android Native' : 'iOS Native',
+                eventType: rec.eventType || 'auto-agent',
+                confidence: rec.confidence || 85,
+                intensityDb: rec.intensityDb || 55,
+                detectedAt: detectedAtIso,
+                sessionGroup: `night_${detectedAtIso.slice(0, 10)}`,
+            };
+
             if (provider === 'local') {
                 await axios.post(
                     `${API_URL}/upload/metadata`,
-                    {
-                        storageKey: fileKey,
-                        audioBase64,
-                        duration: rec.sizeKb > 0 ? Math.round(rec.sizeKb / 12) : 8,
-                        deviceModel: Platform.OS === 'android' ? 'Android Native' : 'iOS Native',
-                        eventType: rec.eventType || 'auto-agent',
-                        confidence: rec.confidence || 85,
-                        intensityDb: rec.intensityDb || -30,
-                    },
+                    metaPayload,
                     { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 }
                 );
             } else {
@@ -688,15 +761,7 @@ export default function RecordingScreen({ token, onLogout }) {
                 });
                 await axios.post(
                     `${API_URL}/upload/metadata`,
-                    {
-                        s3Key: fileKey,
-                        audioBase64,
-                        duration: rec.sizeKb > 0 ? Math.round(rec.sizeKb / 12) : 8,
-                        deviceModel: Platform.OS === 'android' ? 'Android Native' : 'iOS Native',
-                        eventType: rec.eventType || 'auto-agent',
-                        confidence: rec.confidence || 85,
-                        intensityDb: rec.intensityDb || -30,
-                    },
+                    metaPayload,
                     { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 }
                 );
             }
@@ -709,16 +774,57 @@ export default function RecordingScreen({ token, onLogout }) {
     };
 
     const handleManualUpload = async (rec) => {
-        if (uploadingId === rec.id || uploadedIds.has(rec.id)) return;
+        if (rec.isCloud || uploadedIds.has(rec.filename) || uploadedIds.has(rec.id)) {
+            Alert.alert('✅ Ya sincronizado', 'Esta grabación ya está guardada en la nube.');
+            return;
+        }
+        if (uploadingId === rec.id) return;
         setUploadingId(rec.id);
         const ok = await uploadToCloud(rec);
         setUploadingId(null);
         if (ok) {
-            setUploadedIds((prev) => new Set([...prev, rec.id]));
+            setUploadedIds((prev) => new Set([...prev, rec.filename, rec.id]));
             Alert.alert('✅ Subido a la nube', `${rec.label} está sincronizado.`);
+            await refreshRecordings();
         } else {
-            Alert.alert('Error de subida', 'No se pudo subir. Comprueba la conexión.');
+            Alert.alert('Error de subida', 'No se pudo subir. Comprueba la conexión a internet.');
         }
+    };
+
+    // Sincronizar todas las grabaciones locales pendientes con la nube en lote
+    const syncAllPendingRecordings = async () => {
+        if (isSyncingAll) return;
+        const pending = localRecordings.filter(
+            (r) => !r.isCloud && !uploadedIds.has(r.filename) && !uploadedIds.has(r.id)
+        );
+        if (pending.length === 0) {
+            Alert.alert('✅ Todo Sincronizado', 'Todas tus grabaciones locales ya están subidas en la nube.');
+            return;
+        }
+
+        setIsSyncingAll(true);
+        setSyncProgress({ done: 0, total: pending.length });
+        let successCount = 0;
+
+        for (let i = 0; i < pending.length; i++) {
+            const rec = pending[i];
+            setUploadingId(rec.id);
+            const ok = await uploadToCloud(rec);
+            if (ok) {
+                successCount++;
+                setUploadedIds((prev) => new Set([...prev, rec.filename, rec.id]));
+            }
+            setSyncProgress({ done: i + 1, total: pending.length });
+        }
+
+        setUploadingId(null);
+        setIsSyncingAll(false);
+        await refreshRecordings();
+
+        Alert.alert(
+            'Sincronización Completada',
+            `Se han sincronizado ${successCount} de ${pending.length} grabaciones con la nube exitosamente.`
+        );
     };
 
     // ─── MONITOREO INTELIGENTE ────────────────────────────────────────────────
@@ -908,13 +1014,15 @@ export default function RecordingScreen({ token, onLogout }) {
                         await FileSystem.copyAsync({ from: tempUri, to: destUri });
                     }
 
+                    const approxSpl = Math.max(35, Math.min(95, Math.round(95 + maxDb)));
+
                     const metaIndex = await loadMetadataIndex();
                     metaIndex[filename] = {
                         filename,
                         label: `${analysis.label} (${analysis.confidence}%)`,
                         eventType: analysis.eventType,
                         confidence: analysis.confidence,
-                        intensityDb: maxDb,
+                        intensityDb: approxSpl,
                         durationSecs: TOTAL_CAPTURE_SECONDS,
                         timestamp: ts,
                     };
@@ -929,11 +1037,14 @@ export default function RecordingScreen({ token, onLogout }) {
                     await refreshRecordings();
 
                     uploadToCloud({
+                        id: filename,
                         filename,
                         uri: destUri,
                         eventType: analysis.eventType,
                         confidence: analysis.confidence,
-                        intensityDb: maxDb,
+                        intensityDb: approxSpl,
+                        durationSecs: TOTAL_CAPTURE_SECONDS,
+                        timestamp: ts,
                     }).then((ok) => {
                         if (ok) setUploadedIds((prev) => new Set([...prev, filename]));
                     });
@@ -1013,7 +1124,7 @@ export default function RecordingScreen({ token, onLogout }) {
                             label: '🎙️ Prueba de Micrófono (5s)',
                             eventType: 'test',
                             confidence: 100,
-                            intensityDb: -20,
+                            intensityDb: 75,
                             durationSecs: 5,
                             timestamp: ts,
                         };
@@ -1059,11 +1170,11 @@ export default function RecordingScreen({ token, onLogout }) {
     // ─── Renderizado de Pestañas ──────────────────────────────────────────────
     return (
         <ScrollView contentContainerStyle={s.container} keyboardShouldPersistTaps="handled">
-            {/* Cabecera Principal con Versión v2.2.0 */}
+            {/* Cabecera Principal con Versión v2.3.2 */}
             <View style={s.topHeader}>
                 <Text style={s.mainAppTitle}>EinsDream</Text>
                 <View style={s.versionBadge}>
-                    <Text style={s.versionText}>v2.3.1 (Estable)</Text>
+                    <Text style={s.versionText}>v2.3.2 (Estable)</Text>
                 </View>
             </View>
 
@@ -1315,7 +1426,7 @@ export default function RecordingScreen({ token, onLogout }) {
                         <View style={s.emptyBox}>
                             <Text style={s.emptyTitle}>Sin sesiones evaluadas</Text>
                             <Text style={s.emptyText}>
-                                Inicia el monitoreo o presiona "Recalcular" para generar una simulación clínica completa.
+                                {'Inicia el monitoreo o presiona "Recalcular" para generar una simulación clínica completa.'}
                             </Text>
                             <TouchableOpacity
                                 style={s.genBtn}
@@ -1455,20 +1566,46 @@ export default function RecordingScreen({ token, onLogout }) {
                         </TouchableOpacity>
                     </View>
 
+                    {/* Botón de Sincronización en Bloque para grabaciones offline */}
+                    {(() => {
+                        const pendingCount = localRecordings.filter(
+                            (r) => !r.isCloud && !uploadedIds.has(r.filename) && !uploadedIds.has(r.id)
+                        ).length;
+                        if (pendingCount === 0) return null;
+                        return (
+                            <TouchableOpacity
+                                style={[s.syncAllBtn, isSyncingAll && { opacity: 0.7 }]}
+                                onPress={syncAllPendingRecordings}
+                                disabled={isSyncingAll}
+                            >
+                                {isSyncingAll ? (
+                                    <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} />
+                                ) : (
+                                    <Text style={{ fontSize: 13, marginRight: 6 }}>☁️</Text>
+                                )}
+                                <Text style={s.syncAllBtnText}>
+                                    {isSyncingAll
+                                        ? `Sincronizando (${syncProgress.done}/${syncProgress.total})...`
+                                        : `Sincronizar con la nube (${pendingCount} pendientes)`}
+                                </Text>
+                            </TouchableOpacity>
+                        );
+                    })()}
+
                     {loadingRecs ? (
                         <ActivityIndicator size="large" color="#38bdf8" style={{ marginVertical: 24 }} />
                     ) : localRecordings.length === 0 ? (
                         <View style={s.emptyBox}>
                             <Text style={s.emptyTitle}>Aún no hay grabaciones</Text>
                             <Text style={s.emptyText}>
-                                Toca "Probar micrófono" en la pestaña de monitoreo o deja el sensor activo al acostarte.
+                                {'Toca "Probar micrófono" en la pestaña de monitoreo o deja el sensor activo al acostarte.'}
                             </Text>
                         </View>
                     ) : (
                         localRecordings.map((rec) => {
-                            const isSelected = playingUri === rec.uri;
+                            const isSelected = playingUri === rec.id || playingUri === rec.uri;
                             const isThisPlaying = isSelected && playing;
-                            const isUploaded = uploadedIds.has(rec.id);
+                            const isUploaded = rec.isCloud || rec.isUploaded || uploadedIds.has(rec.filename) || uploadedIds.has(rec.id);
                             const isUploading = uploadingId === rec.id;
                             const progress = isSelected && durMs > 0 ? posMs / durMs : 0;
 
@@ -1477,7 +1614,7 @@ export default function RecordingScreen({ token, onLogout }) {
                                     <View style={{ flex: 1 }}>
                                         <Text style={s.recLabel}>{rec.label}</Text>
                                         <Text style={s.recMeta}>
-                                            {rec.dateStr} · {rec.sizeKb} KB
+                                            {rec.dateStr} · {rec.sizeKb} KB {isUploaded ? '· ☁️ Sincronizado' : '· ⏳ Local'}
                                         </Text>
 
                                         {/* Enhanced Audio Controls */}
@@ -1488,8 +1625,7 @@ export default function RecordingScreen({ token, onLogout }) {
                                                     activeOpacity={0.8}
                                                     style={s.seekBarTrack}
                                                     onPress={(e) => {
-                                                        // Calculate seek position from tap X
-                                                        const { locationX, target } = e.nativeEvent;
+                                                        const { locationX } = e.nativeEvent;
                                                         e.target.measure((fx, fy, width) => {
                                                             handleSeek(Math.max(0, Math.min(1, locationX / (width || 1))));
                                                         });
@@ -1528,7 +1664,7 @@ export default function RecordingScreen({ token, onLogout }) {
                                             { backgroundColor: isUploaded ? '#7c3aed' : '#2563eb', marginLeft: 6 },
                                         ]}
                                         onPress={() => handleManualUpload(rec)}
-                                        disabled={isUploaded || isUploading}
+                                        disabled={isUploading}
                                     >
                                         {isUploading ? (
                                             <ActivityIndicator size="small" color="#fff" />
@@ -2026,6 +2162,21 @@ const s = StyleSheet.create({
         fontSize: 11,
         fontWeight: '700',
         color: '#cbd5e1',
+    },
+    syncAllBtn: {
+        backgroundColor: '#2563eb',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 10,
+        paddingHorizontal: 16,
+        borderRadius: 10,
+        marginBottom: 14,
+    },
+    syncAllBtnText: {
+        color: '#ffffff',
+        fontWeight: '700',
+        fontSize: 13,
     },
 
     emptyBox: {

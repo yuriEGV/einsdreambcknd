@@ -83,10 +83,13 @@ const audioSessionSchema = new mongoose.Schema({
     }],
     createdAt: {
         type: Date,
-        default: Date.now,
-        index: true
+        default: Date.now
     }
 });
+
+// 5-Day Database Retention TTL: Automatically expire database records after 5 days (432,000 seconds)
+audioSessionSchema.index({ createdAt: 1 }, { expireAfterSeconds: 432000 });
+
 
 // Pre-save hook to ensure s3Key and storageKey stay in sync for backward compatibility
 audioSessionSchema.pre('save', function (next) {

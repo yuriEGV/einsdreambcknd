@@ -4,13 +4,20 @@ const JWT_SECRET = process.env.JWT_SECRET || 'einsdream_super_secret_jwt_key_202
 
 export default (req, res, next) => {
     const authHeader = req.headers.authorization;
-    if (!authHeader) {
-        return res.status(401).json({ message: 'Authorization header missing' });
+    let token = null;
+
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        token = authHeader.split(' ')[1];
+    } else if (authHeader) {
+        token = authHeader;
+    } else if (req.query && req.query.token) {
+        token = req.query.token;
+    } else if (req.headers['x-access-token']) {
+        token = req.headers['x-access-token'];
     }
 
-    const token = authHeader.split(' ')[1];
     if (!token) {
-        return res.status(401).json({ message: 'Token missing' });
+        return res.status(401).json({ message: 'Authorization token missing' });
     }
 
     try {

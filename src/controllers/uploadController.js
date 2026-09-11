@@ -152,6 +152,12 @@ export const saveMetadata = async (req, res) => {
         const effectiveKey = storageKey || s3Key || `session_${Date.now()}`;
         const cleanEventType = eventType || 'auto-agent';
 
+        // Normalize intensity to positive dB SPL (35-95 dB) if sent as negative dBFS
+        let normalizedIntensity = typeof intensityDb === 'number' ? intensityDb : 58;
+        if (normalizedIntensity < 0) {
+            normalizedIntensity = Math.max(35, Math.min(95, Math.round(95 + normalizedIntensity)));
+        }
+
         const newSession = new AudioSession({
             userId: req.user.userId,
             storageKey: effectiveKey,
@@ -160,7 +166,7 @@ export const saveMetadata = async (req, res) => {
             deviceModel: deviceModel || (req.headers['user-agent'] ? 'Mobile / Web' : 'Einsdream Client'),
             eventType: cleanEventType,
             confidence: typeof confidence === 'number' ? confidence : 85,
-            intensityDb: typeof intensityDb === 'number' ? intensityDb : 58,
+            intensityDb: normalizedIntensity,
             preRollSeconds: typeof preRollSeconds === 'number' ? preRollSeconds : 5,
             postRollSeconds: typeof postRollSeconds === 'number' ? postRollSeconds : 10,
             detectedAt: detectedAt ? new Date(detectedAt) : new Date(),
@@ -199,6 +205,11 @@ export const bulkUploadMetadata = async (req, res) => {
             const ev = events[i];
             try {
                 const effectiveKey = ev.storageKey || ev.s3Key || `bulk_${Date.now()}_${i}`;
+                let normalizedIntensity = typeof ev.intensityDb === 'number' ? ev.intensityDb : 55;
+                if (normalizedIntensity < 0) {
+                    normalizedIntensity = Math.max(35, Math.min(95, Math.round(95 + normalizedIntensity)));
+                }
+
                 const newSession = new AudioSession({
                     userId,
                     storageKey: effectiveKey,
@@ -207,7 +218,7 @@ export const bulkUploadMetadata = async (req, res) => {
                     deviceModel: ev.deviceModel || 'Einsdream Offline Queue',
                     eventType: ev.eventType || 'auto-agent',
                     confidence: typeof ev.confidence === 'number' ? ev.confidence : 80,
-                    intensityDb: typeof ev.intensityDb === 'number' ? ev.intensityDb : 55,
+                    intensityDb: normalizedIntensity,
                     preRollSeconds: typeof ev.preRollSeconds === 'number' ? ev.preRollSeconds : 5,
                     postRollSeconds: typeof ev.postRollSeconds === 'number' ? ev.postRollSeconds : 10,
                     detectedAt: ev.detectedAt ? new Date(ev.detectedAt) : new Date(),
@@ -347,12 +358,31 @@ export const streamAudioSession = async (req, res) => {
         if (session.audioBase64) {
             const cleanBase64 = session.audioBase64.replace(/^data:audio\/[a-zA-Z0-9]+;base64,/, '');
             const buffer = Buffer.from(cleanBase64, 'base64');
-            res.writeHead(200, {
-                'Content-Type': 'audio/m4a',
-                'Content-Length': buffer.length,
-                'Accept-Ranges': 'bytes'
-            });
-            return res.end(buffer);
+            const fileSize = buffer.length;
+            const range = req.headers.range;
+
+            if (range) {
+                const parts = range.replace(/bytes=/, '').split('-');
+                const start = parseInt(parts[0], 10);
+                const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+                const chunksize = (end - start) + 1;
+                const head = {
+                    'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+                    'Accept-Ranges': 'bytes',
+                    'Content-Length': chunksize,
+                    'Content-Type': 'audio/m4a',
+                };
+                res.writeHead(206, head);
+                return res.end(buffer.subarray(start, end + 1));
+            } else {
+                const head = {
+                    'Content-Length': fileSize,
+                    'Content-Type': 'audio/m4a',
+                    'Accept-Ranges': 'bytes'
+                };
+                res.writeHead(200, head);
+                return res.end(buffer);
+            }
         }
 
         res.status(404).json({ message: 'Audio file not found on local storage' });
@@ -423,13 +453,10 @@ export const getNightSession = async (req, res) => {
     try {
         const targetDateStr = req.params.date || req.query.date || new Date().toISOString().slice(0, 10);
 
-        // Include events from 00:00 of target date through 23:59:59 (covering daytime tests + full night)
-        const startDate = new Date(targetDateStr);
-        startDate.setHours(0, 0, 0, 0);
-
-        const endDate = new Date(targetDateStr);
-        endDate.setDate(endDate.getDate() + 1);
-        endDate.setHours(12, 0, 0, 0);
+        // Include events from 12 hours prior through 36 hours later to robustly cover full night across any local timezone (e.g. UTC-3 Chile)
+        const baseDate = new Date(`${targetDateStr}T00:00:00.000Z`);
+        const startDate = new Date(baseDate.getTime() - 12 * 60 * 60 * 1000);
+        const endDate = new Date(baseDate.getTime() + 36 * 60 * 60 * 1000);
 
         const filter = {
             $or: [

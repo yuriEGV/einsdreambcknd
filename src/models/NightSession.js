@@ -190,5 +190,7 @@ const nightSessionSchema = new mongoose.Schema({
 });
 
 nightSessionSchema.index({ userId: 1, sessionDate: -1 });
+// 5-Day Database Retention TTL: Automatically expire database records after 5 days (432,000 seconds)
+nightSessionSchema.index({ createdAt: 1 }, { expireAfterSeconds: 432000 });
 
 export default mongoose.model('NightSession', nightSessionSchema);
