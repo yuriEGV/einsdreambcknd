@@ -243,6 +243,7 @@ export default function RecordingScreen({ token, onLogout }) {
     const capturingRef = useRef(false);
     const listenerRecRef = useRef(null);
     const monitorTimerRef = useRef(null);
+    const monitorStartTimestampRef = useRef(null);
     const testTimerRef = useRef(null);
     const testRecRef = useRef(null);
     const soundRef = useRef(null);
@@ -319,94 +320,89 @@ export default function RecordingScreen({ token, onLogout }) {
             }
         } catch (_) {}
 
-        // Recompute predictions with new baseline
-        generateAnalysisFromData(newProfile);
+        // Recalcular predicciones con la nueva línea base
+        await reloadTrendsAndPredictions(newProfile);
         Alert.alert('✅ Evaluación Guardada', 'Tu línea base y recomendaciones han sido recalculadas con éxito.');
     };
 
-    // ─── Cargar o Generar Análisis Inicial ───────────────────────────────────
+    // ─── Gestión de Sesiones Reales en Caché Local ─────────────────────────────
+    const loadCachedSessions = async () => {
+        try {
+            const dir = getBaseDir();
+            const filePath = dir + SESSIONS_CACHE_FILENAME;
+            const info = await FileSystem.getInfoAsync(filePath);
+            if (info.exists) {
+                const raw = await FileSystem.readAsStringAsync(filePath);
+                const parsed = JSON.parse(raw);
+                if (Array.isArray(parsed)) return parsed;
+            }
+        } catch (_) {}
+        return [];
+    };
+
+    const saveSessionToCache = async (session) => {
+        try {
+            const dir = getBaseDir();
+            const filePath = dir + SESSIONS_CACHE_FILENAME;
+            const current = await loadCachedSessions();
+            const sDate = session.sessionDate || (session.startTime ? new Date(session.startTime).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10));
+            const filtered = current.filter(s => (s.sessionDate || (s.startTime ? new Date(s.startTime).toISOString().slice(0, 10) : '')) !== sDate);
+            const updated = [session, ...filtered].slice(0, 30);
+            await FileSystem.writeAsStringAsync(filePath, JSON.stringify(updated));
+        } catch (_) {}
+    };
+
+    const reloadTrendsAndPredictions = async (profile = sleepProfile) => {
+        try {
+            const sessions = await loadCachedSessions();
+            if (sessions.length > 0) {
+                setNightAnalysis(sessions[0]);
+            }
+            const trends = calculateTrendsBenchmark(sessions, profile);
+            setTrendsData(trends);
+            const opt = predictOptimalBedtime(sessions, profile);
+            setOptimalBedtimeData(opt);
+        } catch (e) {
+            console.warn('[reloadTrendsAndPredictions]', e.message);
+        }
+    };
+
+    // ─── Cargar Análisis Inicial con Datos Reales ─────────────────────────────
     const loadInitialAnalysis = async () => {
         setIsEvaluating(true);
         try {
-            // Intentar recuperar de backend
+            let sessions = [];
             if (token) {
                 try {
-                    const res = await axios.get(`${API_URL}/night-sessions/latest-analysis`, {
+                    const res = await axios.get(`${API_URL}/night-sessions`, {
                         headers: { Authorization: `Bearer ${token}` },
                         timeout: 5000
                     });
-                    if (res.data?.analysis) {
-                        setNightAnalysis(res.data.analysis);
-                        const trendsRes = await axios.get(`${API_URL}/night-sessions/trends`, {
-                            headers: { Authorization: `Bearer ${token}` },
-                            timeout: 5000
-                        });
-                        if (trendsRes.data?.benchmark) setTrendsData(trendsRes.data.benchmark);
-                        const predRes = await axios.get(`${API_URL}/night-sessions/predict-bedtime`, {
-                            headers: { Authorization: `Bearer ${token}` },
-                            timeout: 5000
-                        });
-                        if (predRes.data?.recommendation) setOptimalBedtimeData(predRes.data.recommendation);
-                        setIsEvaluating(false);
-                        return;
+                    if (Array.isArray(res.data?.sessions) && res.data.sessions.length > 0) {
+                        sessions = res.data.sessions;
                     }
                 } catch (_) {}
             }
 
-            // Fallback: Generar análisis on-device realista y clínicamente fundamentado
-            generateAnalysisFromData(sleepProfile);
+            if (sessions.length === 0) {
+                sessions = await loadCachedSessions();
+            }
+
+            if (sessions.length > 0) {
+                setNightAnalysis(sessions[0]);
+            } else {
+                setNightAnalysis(null);
+            }
+
+            const trends = calculateTrendsBenchmark(sessions, sleepProfile);
+            setTrendsData(trends);
+            const opt = predictOptimalBedtime(sessions, sleepProfile);
+            setOptimalBedtimeData(opt);
         } catch (e) {
             console.warn('[loadInitialAnalysis]', e.message);
         } finally {
             setIsEvaluating(false);
         }
-    };
-
-    const generateAnalysisFromData = (profile) => {
-        const now = Date.now();
-        const start = new Date(now - 7.8 * 3600 * 1000);
-        const end = new Date(now);
-
-        // Simulador fisiológico de Health Connect (FC, SpO2, fases)
-        readNightHealthMetrics({ startTime: start, endTime: end }).then((healthData) => {
-            const mockSessionWindow = {
-                startTime: start,
-                endTime: end,
-                sessionDate: new Date().toISOString().slice(0, 10)
-            };
-
-            const fullSession = processNightEngineCorrelation({
-                audioEvents: localRecordings,
-                healthData,
-                sessionWindow: mockSessionWindow,
-                baselineProfile: profile
-            });
-
-            setNightAnalysis(fullSession);
-
-            // Generar series históricas sintéticas de 14 noches para benchmarking si no hay suficientes
-            const mockHistory = [fullSession];
-            for (let i = 1; i <= 13; i++) {
-                const dayStart = new Date(now - (i * 24 + 7.5 + (Math.random() * 1.2 - 0.6)) * 3600 * 1000);
-                const dayEnd = new Date(dayStart.getTime() + (7.2 + Math.random() * 1.5) * 3600 * 1000);
-                const dDate = dayEnd.toISOString().slice(0, 10);
-                mockHistory.push({
-                    sessionDate: dDate,
-                    startTime: dayStart,
-                    endTime: dayEnd,
-                    sleepBreakdown: { actualSleepMinutes: Math.round((dayEnd - dayStart) / 60000) - 30 },
-                    sleepSummary: { durationMinutes: Math.round((dayEnd - dayStart) / 60000), deepSleepMinutes: 100 },
-                    dimensions: { deepSleep: Math.round(20 + Math.random() * 8) },
-                    einsdreamScore: { totalScore: Math.round(75 + Math.random() * 18), ratingStars: 4 }
-                });
-            }
-
-            const trends = calculateTrendsBenchmark(mockHistory, profile);
-            setTrendsData(trends);
-
-            const opt = predictOptimalBedtime(mockHistory, profile);
-            setOptimalBedtimeData(opt);
-        });
     };
 
     // ─── Cargar y Gestionar Metadatos e Índice Local ──────────────────────────
@@ -459,8 +455,8 @@ export default function RecordingScreen({ token, onLogout }) {
                     id: file,
                     filename: file,
                     uri,
-                    label: meta.label || (file.startsWith('prueba_') ? '🎙️ Prueba de Micrófono' : '🎧 Evento Grabado'),
-                    eventType: meta.eventType || 'unknown',
+                    label: (meta.label && meta.label !== 'unknown') ? meta.label : (file.startsWith('prueba_') ? '🎙️ Prueba de Micrófono' : '🎧 Audio Nocturno'),
+                    eventType: (meta.eventType && meta.eventType !== 'unknown') ? meta.eventType : 'audio',
                     confidence: meta.confidence || 85,
                     intensityDb: meta.intensityDb || -30,
                     sizeBytes: info.size || 0,
@@ -501,17 +497,17 @@ export default function RecordingScreen({ token, onLogout }) {
                             const streamUri = `${API_URL}/sessions/${cs._id}/stream?token=${token}`;
                             const typeLabel = cs.eventType === 'snore' || cs.eventType === 'ronquido' ? 'Ronquido'
                                 : cs.eventType === 'cough' || cs.eventType === 'tos' ? 'Tos'
-                                : cs.eventType === 'voice' ? 'Voz / Habla'
+                                : cs.eventType === 'voice' || cs.eventType === 'habla' ? 'Voz / Habla'
                                 : cs.eventType === 'breathing' ? 'Respiración'
-                                : (cs.eventType === 'movement' ? 'Movimiento' : (cs.eventType || 'Audio guardado'));
+                                : (cs.eventType === 'movement' ? 'Movimiento' : 'Audio Nocturno (Ambiente / Voz)');
 
                             list.push({
                                 id: cs._id,
                                 filename: baseName,
                                 cloudId: cs._id,
                                 uri: streamUri,
-                                label: cs.label || `☁️ ${typeLabel}`,
-                                eventType: cs.eventType || 'auto-agent',
+                                label: (cs.label && cs.label !== 'unknown') ? cs.label : `☁️ ${typeLabel}`,
+                                eventType: cs.eventType || 'audio',
                                 confidence: cs.confidence || 85,
                                 intensityDb: cs.intensityDb || 55,
                                 sizeBytes: cs.duration ? Math.round(cs.duration * 12000) : 48000,
@@ -846,6 +842,7 @@ export default function RecordingScreen({ token, onLogout }) {
         await unloadSound();
         monitorActiveRef.current = true;
         capturingRef.current = false;
+        monitorStartTimestampRef.current = Date.now();
         setIsMonitoring(true);
         setIsCapturing(false);
         setMonitorSeconds(0);
@@ -879,26 +876,48 @@ export default function RecordingScreen({ token, onLogout }) {
 
         await refreshRecordings();
 
-        // Evaluar la noche completa y sincronizar en la nube
-        const now = Date.now();
-        const start = new Date(now - Math.max(1800, monitorSeconds) * 1000);
-        const end = new Date(now);
+        // Duración Real del Sueño: Calculada estrictamente entre que se presiona Iniciar y Detener
+        const endTimeMs = Date.now();
+        const startTimeMs = monitorStartTimestampRef.current || (endTimeMs - Math.max(60, monitorSeconds) * 1000);
+        monitorStartTimestampRef.current = null;
 
-        readNightHealthMetrics({ startTime: start, endTime: end }).then((healthData) => {
+        const start = new Date(startTimeMs);
+        const end = new Date(endTimeMs);
+        const elapsedMinutes = Math.max(1, Math.round((endTimeMs - startTimeMs) / 60000));
+
+        // Filtrar grabaciones reales que ocurrieron durante esta noche
+        const sessionRecordings = localRecordings.filter((r) => {
+            if (!r.modTime && !r.timestamp) return true;
+            const rTime = r.modTime || new Date(r.timestamp).getTime();
+            return rTime >= startTimeMs - 5000 && rTime <= endTimeMs + 5000;
+        });
+
+        readNightHealthMetrics({ startTime: start, endTime: end }).then(async (healthData) => {
             const correlated = processNightEngineCorrelation({
-                audioEvents: localRecordings,
+                audioEvents: sessionRecordings,
                 healthData,
                 sessionWindow: {
                     startTime: start,
                     endTime: end,
-                    sessionDate: new Date().toISOString().slice(0, 10)
+                    sessionDate: start.toISOString().slice(0, 10),
+                    durationMinutes: elapsedMinutes
                 },
                 baselineProfile: sleepProfile
             });
 
-            setNightAnalysis(correlated);
+            // Forzar que los desgloses reflejen la duración real exacta
+            if (correlated.sleepBreakdown) {
+                correlated.sleepBreakdown.totalMonitoredMinutes = elapsedMinutes;
+                correlated.sleepBreakdown.actualSleepMinutes = elapsedMinutes;
+            }
+            if (correlated.sleepSummary) {
+                correlated.sleepSummary.durationMinutes = elapsedMinutes;
+            }
 
-            // Sincronizar con backend si hay token
+            setNightAnalysis(correlated);
+            await saveSessionToCache(correlated);
+            await reloadTrendsAndPredictions(sleepProfile);
+
             if (token) {
                 axios.post(`${API_URL}/night-sessions`, correlated, {
                     headers: { Authorization: `Bearer ${token}` },
@@ -906,16 +925,15 @@ export default function RecordingScreen({ token, onLogout }) {
                 }).catch(() => {});
             }
 
-            // Cambiar automáticamente a la pestaña Einsdream Score para ver los resultados
             setActiveTab('score');
 
             Alert.alert(
-                '🌙 Noche Evaluada con Éxito',
-                `Tu Einsdream Score: ${correlated.einsdreamScore.totalScore}/100\n\n` +
-                `• Regularidad: ${correlated.einsdreamScore.regularityScore}%\n` +
-                `• Duración: ${correlated.einsdreamScore.durationScore}%\n` +
-                `• Calidad: ${correlated.einsdreamScore.qualityScore}%\n\n` +
-                `Revisa el desglose completo en la pestaña "Einsdream Score".`
+                '🌙 Noche Registrada con Éxito',
+                `Duración monitoreada: ${Math.floor(elapsedMinutes / 60)}h ${elapsedMinutes % 60}m\n` +
+                `Einsdream Score: ${correlated.einsdreamScore.totalScore}/100\n\n` +
+                `• Eventos acústicos capturados: ${sessionRecordings.length}\n` +
+                `• Calidad acústica: ${correlated.einsdreamScore.qualityScore}%\n\n` +
+                `Revisa el desglose completo en la pestaña "Score".`
             );
         });
     };
@@ -1329,9 +1347,9 @@ export default function RecordingScreen({ token, onLogout }) {
                                 </Text>
                                 <TouchableOpacity
                                     style={s.recalcBtn}
-                                    onPress={() => generateAnalysisFromData(sleepProfile)}
+                                    onPress={() => reloadTrendsAndPredictions(sleepProfile)}
                                 >
-                                    <Text style={s.recalcBtnText}>🔄 Recalcular</Text>
+                                    <Text style={s.recalcBtnText}>🔄 Actualizar</Text>
                                 </TouchableOpacity>
                             </View>
 
@@ -1424,15 +1442,15 @@ export default function RecordingScreen({ token, onLogout }) {
                         </View>
                     ) : (
                         <View style={s.emptyBox}>
-                            <Text style={s.emptyTitle}>Sin sesiones evaluadas</Text>
+                            <Text style={s.emptyTitle}>Sin noches registradas aún</Text>
                             <Text style={s.emptyText}>
-                                {'Inicia el monitoreo o presiona "Recalcular" para generar una simulación clínica completa.'}
+                                {'Tu Einsdream Score y dimensiones se calculan a partir de tus noches reales monitoreadas. Activa el monitoreo nocturno antes de dormir y presiona "Detener" al despertar.'}
                             </Text>
                             <TouchableOpacity
                                 style={s.genBtn}
-                                onPress={() => generateAnalysisFromData(sleepProfile)}
+                                onPress={() => setActiveTab('monitoring')}
                             >
-                                <Text style={s.genBtnText}>Generar Análisis de Prueba</Text>
+                                <Text style={s.genBtnText}>Ir a Iniciar Monitoreo</Text>
                             </TouchableOpacity>
                         </View>
                     )}
@@ -1471,27 +1489,27 @@ export default function RecordingScreen({ token, onLogout }) {
                     {optimalBedtimeData && (
                         <View style={s.predictCard}>
                             <View style={s.predictBadge}>
-                                <Text style={s.predictBadgeText}>🔮 MODELO DE REGRESIÓN DE HÁBITOS</Text>
+                                <Text style={s.predictBadgeText}>🔮 MODELO CIRCADIANO PERSONALIZADO</Text>
                             </View>
                             <Text style={s.predictTitle}>Hora Óptima para Dormir Hoy</Text>
                             <View style={s.predictTimesRow}>
                                 <View style={s.predictTimeCol}>
                                     <Text style={s.predictTimeBig}>{optimalBedtimeData.recommendedBedtime}</Text>
-                                    <Text style={s.predictTimeLabel}>Hora exacta de acostarse</Text>
+                                    <Text style={s.predictTimeLabel}>Hora sugerida de acostarse</Text>
                                 </View>
                                 <Text style={{ fontSize: 24, color: '#64748b' }}>→</Text>
                                 <View style={s.predictTimeCol}>
                                     <Text style={s.predictTimeBig}>{optimalBedtimeData.recommendedWakeTime}</Text>
-                                    <Text style={s.predictTimeLabel}>Despertar en fase ligera</Text>
+                                    <Text style={s.predictTimeLabel}>Despertar objetivo</Text>
                                 </View>
                             </View>
 
                             <View style={s.predictProjectionRow}>
                                 <Text style={s.predictProjItem}>
-                                    🌙 Profundo Proyectado: <Text style={{ color: '#10b981', fontWeight: '800' }}>{optimalBedtimeData.projectedDeepSleepPct}%</Text>
+                                    🎯 Meta de Descanso: <Text style={{ color: '#38bdf8', fontWeight: '800' }}>{optimalBedtimeData.targetSleepHours || '8 horas'}</Text>
                                 </Text>
                                 <Text style={s.predictProjItem}>
-                                    🎯 Eficiencia Proyectada: <Text style={{ color: '#38bdf8', fontWeight: '800' }}>{optimalBedtimeData.projectedEfficiency}%</Text>
+                                    🧬 Calibración: <Text style={{ color: '#10b981', fontWeight: '800' }}>{optimalBedtimeData.algorithmUsed || 'Cronotipo'}</Text>
                                 </Text>
                             </View>
 
@@ -1525,30 +1543,40 @@ export default function RecordingScreen({ token, onLogout }) {
                                 </View>
                             </View>
 
-                            {/* Tabla Comparativa de 14 Noches (Estilo Sleep as Android) */}
+                            {/* Tabla Comparativa de Noches Registradas */}
                             <Text style={[s.benchTitle, { marginTop: 16, fontSize: 13 }]}>
                                 🗓️ Registro Comparativo por Noches
                             </Text>
                             <View style={s.tableHeader}>
-                                <Text style={[s.th, { flex: 2 }]}>Día</Text>
-                                <Text style={[s.th, { flex: 2 }]}>Sueño (h)</Text>
-                                <Text style={[s.th, { flex: 2 }]}>Déficit</Text>
-                                <Text style={[s.th, { flex: 2 }]}>Profundo</Text>
+                                <Text style={[s.th, { flex: 2 }]}>Noche</Text>
+                                <Text style={[s.th, { flex: 2.2 }]}>Horario</Text>
+                                <Text style={[s.th, { flex: 2 }]}>Duración</Text>
+                                <Text style={[s.th, { flex: 1.8 }]}>Eventos</Text>
+                                <Text style={[s.th, { flex: 2 }]}>Calidad</Text>
                             </View>
 
-                            {trendsData.benchmarkTable.map((item, idx) => (
-                                <View key={idx} style={[s.tableRow, idx % 2 === 0 && s.tableRowAlt]}>
-                                    <View style={{ flex: 2 }}>
-                                        <Text style={s.tdDay}>{item.dayName}</Text>
-                                        <Text style={s.tdSubDate}>{item.date.slice(5)}</Text>
+                            {trendsData.benchmarkTable && trendsData.benchmarkTable.length > 0 ? (
+                                trendsData.benchmarkTable.map((item, idx) => (
+                                    <View key={idx} style={[s.tableRow, idx % 2 === 0 && s.tableRowAlt]}>
+                                        <View style={{ flex: 2 }}>
+                                            <Text style={s.tdDay}>{item.dayName}</Text>
+                                            <Text style={s.tdSubDate}>{item.date.slice(5)}</Text>
+                                        </View>
+                                        <Text style={[s.td, { flex: 2.2, fontSize: 11 }]}>{item.schedule}</Text>
+                                        <Text style={[s.td, { flex: 2, fontWeight: '800', color: '#38bdf8' }]}>{item.sleepHours}</Text>
+                                        <Text style={[s.td, { flex: 1.8, color: '#f1f5f9' }]}>{item.eventsCount}</Text>
+                                        <Text style={[s.td, { flex: 2, color: item.quality === 'Óptima' || item.quality === 'Tranquila' ? '#34d399' : '#f59e0b' }]}>
+                                            {item.quality}
+                                        </Text>
                                     </View>
-                                    <Text style={[s.td, { flex: 2, fontWeight: '800' }]}>{item.sleepHours}</Text>
-                                    <Text style={[s.td, { flex: 2, color: item.deficitRaw >= 0 ? '#34d399' : '#f87171' }]}>
-                                        {item.deficitHours}
+                                ))
+                            ) : (
+                                <View style={{ paddingVertical: 18, alignItems: 'center' }}>
+                                    <Text style={{ color: '#94a3b8', fontSize: 12, textAlign: 'center', lineHeight: 18 }}>
+                                        Aún no hay noches registradas en el historial. Tu primera noche se guardará automáticamente con su duración y audios al presionar "Detener Monitoreo".
                                     </Text>
-                                    <Text style={[s.td, { flex: 2, color: '#10b981' }]}>{item.deepSleepPct}</Text>
                                 </View>
-                            ))}
+                            )}
                         </View>
                     )}
                 </View>
@@ -1564,6 +1592,16 @@ export default function RecordingScreen({ token, onLogout }) {
                         <TouchableOpacity style={s.refreshBtn} onPress={refreshRecordings} disabled={loadingRecs}>
                             <Text style={s.refreshBtnText}>🔄 Actualizar</Text>
                         </TouchableOpacity>
+                    </View>
+
+                    {/* Aviso de Privacidad y Origen Exclusivo del Micrófono Nocturno */}
+                    <View style={{ backgroundColor: 'rgba(56, 189, 248, 0.08)', borderWidth: 1, borderColor: 'rgba(56, 189, 248, 0.25)', borderRadius: 10, padding: 10, marginBottom: 14 }}>
+                        <Text style={{ color: '#38bdf8', fontSize: 11, fontWeight: '700', marginBottom: 2 }}>
+                            🎙️ Grabaciones en Vivo del Micrófono Nocturno
+                        </Text>
+                        <Text style={{ color: '#94a3b8', fontSize: 10, lineHeight: 14 }}>
+                            Estos audios corresponden únicamente al sonido ambiental capturado por el micrófono del teléfono mientras el monitoreo nocturno estuvo activo. EinsDream funciona en un entorno seguro y aislado: nunca accede a WhatsApp ni a archivos personales del teléfono.
+                        </Text>
                     </View>
 
                     {/* Botón de Sincronización en Bloque para grabaciones offline */}
