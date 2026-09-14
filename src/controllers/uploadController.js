@@ -146,7 +146,14 @@ export const saveMetadata = async (req, res) => {
             detectedAt,
             sessionGroup,
             audioBase64,
-            audioUrl
+            audioUrl,
+            // v2.4.0 Night Session fields
+            isLargeFile,
+            isNightSession,
+            sessionDate,
+            durationMs,
+            eventsCount,
+            soundEvents
         } = req.body;
 
         const effectiveKey = storageKey || s3Key || `session_${Date.now()}`;
@@ -157,6 +164,9 @@ export const saveMetadata = async (req, res) => {
         if (normalizedIntensity < 0) {
             normalizedIntensity = Math.max(35, Math.min(95, Math.round(95 + normalizedIntensity)));
         }
+
+        // For large night recordings: don't store base64 (too large for Vercel body limit)
+        const shouldStoreBase64 = audioBase64 && !isLargeFile;
 
         const newSession = new AudioSession({
             userId: req.user.userId,
@@ -172,7 +182,14 @@ export const saveMetadata = async (req, res) => {
             detectedAt: detectedAt ? new Date(detectedAt) : new Date(),
             sessionGroup: sessionGroup || `night_${new Date().toISOString().slice(0, 10)}`,
             audioUrl: audioUrl || undefined,
-            audioBase64: audioBase64 || undefined
+            audioBase64: shouldStoreBase64 ? audioBase64 : undefined,
+            // v2.4.0 fields
+            isLargeFile: !!isLargeFile,
+            isNightSession: !!isNightSession,
+            sessionDate: sessionDate || new Date().toISOString().slice(0, 10),
+            durationMs: Number(durationMs) || 0,
+            eventsCount: Number(eventsCount) || 0,
+            soundEvents: Array.isArray(soundEvents) ? soundEvents : []
         });
 
         await newSession.save();
@@ -186,6 +203,7 @@ export const saveMetadata = async (req, res) => {
         res.status(500).json({ message: 'Error saving metadata', error: error.message });
     }
 };
+
 
 /**
  * Bulk Upload for Offline Queue Sync

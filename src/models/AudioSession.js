@@ -29,6 +29,35 @@ const audioSessionSchema = new mongoose.Schema({
         required: true,
         default: 15
     },
+    // Full-night session metadata (v2.4.0+)
+    isLargeFile: {
+        type: Boolean,
+        default: false
+    },
+    isNightSession: {
+        type: Boolean,
+        default: false
+    },
+    sessionDate: {
+        type: String, // 'YYYY-MM-DD' for grouping
+        index: true
+    },
+    durationMs: {
+        type: Number, // total duration in ms (for night sessions)
+        default: 0
+    },
+    eventsCount: {
+        type: Number,
+        default: 0
+    },
+    soundEvents: [{
+        relativeMs: { type: Number, required: true }, // ms from recording start
+        timestamp:  { type: Date },
+        eventType:  { type: String, default: 'unknown' },
+        label:      { type: String },
+        confidence: { type: Number, default: 80 },
+        intensityDb:{ type: Number, default: 55 }
+    }],
     deviceModel: {
         type: String,
         default: 'Web Monitor'
