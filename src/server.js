@@ -144,8 +144,8 @@ app.get('/', async (req, res) => {
   res.json({
     status: 'ONLINE',
     message: 'Einsdream Backend API is running',
-    version: '2.3.1',
-    apkVersion: '2.3.1',
+    version: '2.4.0',
+    apkVersion: '2.4.0',
     apkUrl: '/download/apk',
     dbStatus: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
     dbError: lastDbError,
