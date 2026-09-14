@@ -3,6 +3,7 @@ import express from 'express';
 import mongoose from 'mongoose';
 import cors from 'cors';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 import apiRoutes from './routes/api.js';
@@ -33,17 +34,37 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-// Specific handler for versioned APK downloads (all versions redirect to the current APK file)
+// Specific handler for versioned APK downloads (serves the latest v2.4.0 APK for all version queries)
 app.get([
+  '/public/einsdream-mobile-v2.4.0.apk',
   '/public/einsdream-mobile-v2.3.2.apk',
   '/public/einsdream-mobile-v2.3.1.apk',
   '/public/einsdream-mobile-v2.3.0.apk',
   '/public/einsdream-mobile-v2.2.0.apk',
   '/public/einsdream-mobile-v2.1.1.apk',
-  '/public/einsdream-mobile-v2.1.0.apk'
+  '/public/einsdream-mobile-v2.1.0.apk',
+  '/public/einsdream-mobile.apk'
 ], (req, res) => {
-  const apkPath = path.join(__dirname, '../public/einsdream-mobile.apk');
-  res.download(apkPath, 'einsdream-mobile-v2.3.2.apk');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+  const apk240 = path.join(__dirname, '../public/einsdream-mobile-v2.4.0.apk');
+  const apkBase = path.join(__dirname, '../public/einsdream-mobile.apk');
+  const fileToServe = fs.existsSync(apk240) ? apk240 : apkBase;
+  res.download(fileToServe, 'einsdream-mobile-v2.4.0.apk');
+});
+
+// Wildcard regex handler: any /public/einsdream-mobile*.apk request is served reliably with v2.4.0
+app.get(/^\/public\/einsdream-mobile.*\.apk$/, (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+  const apk240 = path.join(__dirname, '../public/einsdream-mobile-v2.4.0.apk');
+  const apkBase = path.join(__dirname, '../public/einsdream-mobile.apk');
+  const fileToServe = fs.existsSync(apk240) ? apk240 : apkBase;
+  res.download(fileToServe, 'einsdream-mobile-v2.4.0.apk');
 });
 
 // Serve static files from the public directory
@@ -55,31 +76,34 @@ app.get(['/download/apk', '/download/apk/:version'], (req, res) => {
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
-  const apkPath = path.join(__dirname, '../public/einsdream-mobile.apk');
+  const apk240 = path.join(__dirname, '../public/einsdream-mobile-v2.4.0.apk');
+  const apkBase = path.join(__dirname, '../public/einsdream-mobile.apk');
+  const fileToServe = fs.existsSync(apk240) ? apk240 : apkBase;
   const targetFilename = req.params.version
     ? `einsdream-mobile-v${req.params.version}.apk`
-    : 'einsdream-mobile-v2.3.2.apk';
-  res.download(apkPath, targetFilename, (err) => {
+    : 'einsdream-mobile-v2.4.0.apk';
+  res.download(fileToServe, targetFilename, (err) => {
     if (err && !res.headersSent) {
-      res.redirect('/public/einsdream-mobile.apk');
+      res.redirect('/public/einsdream-mobile-v2.4.0.apk');
     }
   });
 });
 
-// App version info endpoint — used by the admin panel to show the current APK version
+// App version info endpoint — used by the admin panel and mobile app to show current APK version
 app.get('/api/app-version', (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.json({
-    version: '2.3.2',
-    versionCode: 8,
+    version: '2.4.0',
+    versionCode: 9,
     apkUrl: '/download/apk',
-    apkFilename: 'einsdream-mobile-v2.3.2.apk',
-    releaseDate: '2026-09-11',
+    apkFilename: 'einsdream-mobile-v2.4.0.apk',
+    releaseDate: '2026-09-14',
     changelog: [
-      'Solución integral a reproducción de audio y errores ExoPlayer con caché local',
-      'Nueva sincronización en bloque de grabaciones pendientes desde el celular a la nube',
-      'Calibración acústica para detección precisa de voz y habla humana',
-      'Normalización de gráficos de dispersión acústica y política de retención de 5 días',
+      'Grabación continua nocturna con optimización de compresión mono a 32 kbps',
+      'Detección y clasificación acústica en vivo (ronquidos, tos, voz, respiración)',
+      'Línea de tiempo interactiva con marcadores de eventos y saltos directos en el audio',
+      'Agrupamiento cronológico de audios por períodos (Hoy, Ayer, Esta Semana, etc.)',
+      'Sincronización inteligente a MongoDB sin desbordar el límite de tamaño de la nube',
     ]
   });
 });
