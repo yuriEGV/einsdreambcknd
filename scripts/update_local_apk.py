@@ -16,7 +16,7 @@ root_dir = os.path.abspath(os.path.join(script_dir, '..'))
 public_dir = os.path.join(root_dir, 'public')
 bundle_path = os.path.join(public_dir, 'assets', 'index.android.bundle')
 base_apk = os.path.join(public_dir, 'einsdream-mobile.apk')
-v220_apk = os.path.join(public_dir, 'einsdream-mobile-v2.2.0.apk')
+v250_apk = os.path.join(public_dir, 'einsdream-mobile-v2.5.0.apk')
 
 if not os.path.exists(bundle_path):
     print(f"Error: {bundle_path} not found!")
@@ -49,26 +49,31 @@ entries['assets/index.android.bundle'] = bundle_data
 compress_types['assets/index.android.bundle'] = zipfile.ZIP_STORED
 print("Updated assets/index.android.bundle (ZIP_STORED for Hermes mmap)")
 
-# 2. Patch AndroidManifest.xml to 2.2.0
+# 2. Patch AndroidManifest.xml to 2.5.0
 if 'AndroidManifest.xml' in entries:
     manifest = entries['AndroidManifest.xml']
+    u240 = '2.4.0'.encode('utf-16le')
+    u232 = '2.3.2'.encode('utf-16le')
+    u231 = '2.3.1'.encode('utf-16le')
+    u230 = '2.3.0'.encode('utf-16le')
+    u220 = '2.2.0'.encode('utf-16le')
     u210 = '2.1.0'.encode('utf-16le')
     u100 = '1.0.0'.encode('utf-16le')
-    u220 = '2.2.0'.encode('utf-16le')
-    if u210 in manifest:
-        entries['AndroidManifest.xml'] = manifest.replace(u210, u220)
-        print("Updated AndroidManifest.xml from 2.1.0 to 2.2.0")
-    elif u100 in manifest:
-        entries['AndroidManifest.xml'] = manifest.replace(u100, u220)
-        print("Updated AndroidManifest.xml from 1.0.0 to 2.2.0")
-    elif u220 in manifest:
-        print("AndroidManifest.xml already has 2.2.0")
+    u250 = '2.5.0'.encode('utf-16le')
+    for old_u in [u240, u232, u231, u230, u220, u210, u100]:
+        if old_u in manifest:
+            entries['AndroidManifest.xml'] = manifest.replace(old_u, u250)
+            print(f"Updated AndroidManifest.xml to 2.5.0 from {old_u.decode('utf-16le')}")
+            break
+    else:
+        if u250 in manifest:
+            print("AndroidManifest.xml already has 2.5.0")
 
-# 3. Patch app.config to 2.2.0
+# 3. Patch app.config to 2.5.0
 if 'assets/app.config' in entries:
     cfg = entries['assets/app.config']
-    entries['assets/app.config'] = cfg.replace(b'"2.1.0"', b'"2.2.0"').replace(b'"1.1.4"', b'"2.2.0"').replace(b'"1.0.0"', b'"2.2.0"')
-    print("Updated assets/app.config to 2.2.0")
+    entries['assets/app.config'] = cfg.replace(b'"2.4.0"', b'"2.5.0"').replace(b'"2.3.2"', b'"2.5.0"').replace(b'"2.3.1"', b'"2.5.0"').replace(b'"2.3.0"', b'"2.5.0"').replace(b'"2.2.0"', b'"2.5.0"').replace(b'"2.1.0"', b'"2.5.0"').replace(b'"1.1.4"', b'"2.5.0"').replace(b'"1.0.0"', b'"2.5.0"')
+    print("Updated assets/app.config to 2.5.0")
 
 # 4. Write back APK
 temp_apk = base_apk + '.tmp'
@@ -77,7 +82,6 @@ with zipfile.ZipFile(temp_apk, 'w', allowZip64=True) as z_out:
         ctype = compress_types.get(filename, zipfile.ZIP_DEFLATED)
         zinfo = zipfile.ZipInfo(filename)
         zinfo.compress_type = ctype
-        # Preserve executable permissions if needed
         zinfo.external_attr = 0o644 << 16
         z_out.writestr(zinfo, data)
 
@@ -87,7 +91,7 @@ with zipfile.ZipFile(temp_apk, 'r') as z_check:
     print(f"Bundle verification: compress_size={e.compress_size}, file_size={e.file_size}")
     assert e.compress_size == e.file_size, "Bundle must be uncompressed!"
     m = z_check.read('AndroidManifest.xml')
-    assert u220 in m, "2.2.0 missing in manifest!"
+    assert u250 in m, "2.5.0 missing in manifest!"
     assert 'META-INF/services/kotlinx.coroutines.internal.MainDispatcherFactory' in z_check.namelist(), "Coroutine factory missing!"
 
 # Replace original and create versioned copy
@@ -96,6 +100,6 @@ if os.path.exists(base_apk):
 os.rename(temp_apk, base_apk)
 
 import shutil
-shutil.copy2(base_apk, v220_apk)
+shutil.copy2(base_apk, v250_apk)
 
-print(f"Successfully updated {base_apk} and {v220_apk} to v2.2.0!")
+print(f"Successfully updated {base_apk} and {v250_apk} to v2.5.0!")

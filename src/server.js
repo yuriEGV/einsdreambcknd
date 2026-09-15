@@ -34,8 +34,9 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-// Specific handler for versioned APK downloads (serves the latest v2.4.0 APK for all version queries)
+// Specific handler for versioned APK downloads (serves the latest v2.5.0 APK for all version queries)
 app.get([
+  '/public/einsdream-mobile-v2.5.0.apk',
   '/public/einsdream-mobile-v2.4.0.apk',
   '/public/einsdream-mobile-v2.3.2.apk',
   '/public/einsdream-mobile-v2.3.1.apk',
@@ -49,22 +50,22 @@ app.get([
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
-  const apk240 = path.join(__dirname, '../public/einsdream-mobile-v2.4.0.apk');
+  const apk250 = path.join(__dirname, '../public/einsdream-mobile-v2.5.0.apk');
   const apkBase = path.join(__dirname, '../public/einsdream-mobile.apk');
-  const fileToServe = fs.existsSync(apk240) ? apk240 : apkBase;
-  res.download(fileToServe, 'einsdream-mobile-v2.4.0.apk');
+  const fileToServe = fs.existsSync(apk250) ? apk250 : apkBase;
+  res.download(fileToServe, 'einsdream-mobile-v2.5.0.apk');
 });
 
-// Wildcard regex handler: any /public/einsdream-mobile*.apk request is served reliably with v2.4.0
+// Wildcard regex handler: any /public/einsdream-mobile*.apk request is served reliably with v2.5.0
 app.get(/^\/public\/einsdream-mobile.*\.apk$/, (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
-  const apk240 = path.join(__dirname, '../public/einsdream-mobile-v2.4.0.apk');
+  const apk250 = path.join(__dirname, '../public/einsdream-mobile-v2.5.0.apk');
   const apkBase = path.join(__dirname, '../public/einsdream-mobile.apk');
-  const fileToServe = fs.existsSync(apk240) ? apk240 : apkBase;
-  res.download(fileToServe, 'einsdream-mobile-v2.4.0.apk');
+  const fileToServe = fs.existsSync(apk250) ? apk250 : apkBase;
+  res.download(fileToServe, 'einsdream-mobile-v2.5.0.apk');
 });
 
 // Serve static files from the public directory
@@ -76,15 +77,15 @@ app.get(['/download/apk', '/download/apk/:version'], (req, res) => {
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
-  const apk240 = path.join(__dirname, '../public/einsdream-mobile-v2.4.0.apk');
+  const apk250 = path.join(__dirname, '../public/einsdream-mobile-v2.5.0.apk');
   const apkBase = path.join(__dirname, '../public/einsdream-mobile.apk');
-  const fileToServe = fs.existsSync(apk240) ? apk240 : apkBase;
+  const fileToServe = fs.existsSync(apk250) ? apk250 : apkBase;
   const targetFilename = req.params.version
     ? `einsdream-mobile-v${req.params.version}.apk`
-    : 'einsdream-mobile-v2.4.0.apk';
+    : 'einsdream-mobile-v2.5.0.apk';
   res.download(fileToServe, targetFilename, (err) => {
     if (err && !res.headersSent) {
-      res.redirect('/public/einsdream-mobile-v2.4.0.apk');
+      res.redirect('/public/einsdream-mobile-v2.5.0.apk');
     }
   });
 });
@@ -93,17 +94,17 @@ app.get(['/download/apk', '/download/apk/:version'], (req, res) => {
 app.get('/api/app-version', (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.json({
-    version: '2.4.0',
-    versionCode: 9,
+    version: '2.5.0',
+    versionCode: 10,
     apkUrl: '/download/apk',
-    apkFilename: 'einsdream-mobile-v2.4.0.apk',
-    releaseDate: '2026-09-14',
+    apkFilename: 'einsdream-mobile-v2.5.0.apk',
+    releaseDate: '2026-09-15',
     changelog: [
-      'Grabación continua nocturna con optimización de compresión mono a 32 kbps',
-      'Detección y clasificación acústica en vivo (ronquidos, tos, voz, respiración)',
-      'Línea de tiempo interactiva con marcadores de eventos y saltos directos en el audio',
-      'Agrupamiento cronológico de audios por períodos (Hoy, Ayer, Esta Semana, etc.)',
-      'Sincronización inteligente a MongoDB sin desbordar el límite de tamaño de la nube',
+      'Pausa de privacidad: silencia el micrófono sin terminar la noche ni cambiar fecha',
+      'Línea de tiempo interactiva ampliada con marcadores grandes, píldoras y saltos de 30s/1m',
+      'Sincronización exclusiva de estadísticas y métricas hacia la nube desde pantalla Score',
+      'Protección total de privacidad sin registro durante llamadas o momentos personales',
+      'Soporte completo de estadísticas correlacionadas en la consola web de administración'
     ]
   });
 });
@@ -144,8 +145,8 @@ app.get('/', async (req, res) => {
   res.json({
     status: 'ONLINE',
     message: 'Einsdream Backend API is running',
-    version: '2.4.0',
-    apkVersion: '2.4.0',
+    version: '2.5.0',
+    apkVersion: '2.5.0',
     apkUrl: '/download/apk',
     dbStatus: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
     dbError: lastDbError,

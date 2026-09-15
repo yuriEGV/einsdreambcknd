@@ -180,7 +180,7 @@ export const getNightSessionsHistory = async (req, res) => {
         const sessions = await NightSession.find(query)
             .sort({ sessionDate: -1 })
             .limit(limit)
-            .select('sessionDate startTime endTime status healthSource sleepSummary nightSummary createdAt')
+            .select('sessionDate startTime endTime status healthSource sleepSummary nightSummary einsdreamScore dimensions snoreMetrics cardiovascular pauseSegments syncedFromMobile correlatedEvents createdAt')
             .lean();
 
         res.json({
