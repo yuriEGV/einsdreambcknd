@@ -179,6 +179,16 @@ const nightSessionSchema = new mongoose.Schema({
         snoreEventsCount: { type: Number, default: 0 },
         irregularityIndex: { type: Number, default: 0 }
     },
+    // Privacy Pause Segments (time intervals where recording was muted for user privacy)
+    pauseSegments: [{
+        pausedAt: { type: Date },
+        resumedAt: { type: Date },
+        durationMs: { type: Number, default: 0 }
+    }],
+    syncedFromMobile: {
+        type: Boolean,
+        default: false
+    },
     createdAt: {
         type: Date,
         default: Date.now

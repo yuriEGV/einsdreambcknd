@@ -106,6 +106,8 @@ export const syncNightSession = async (req, res) => {
                 dimensions: finalDimensions,
                 cardiovascular: finalCardio,
                 snoreMetrics: finalSnore,
+                pauseSegments: req.body.pauseSegments || [],
+                syncedFromMobile: true,
                 updatedAt: new Date()
             },
             { upsert: true, new: true, setDefaultsOnInsert: true }
