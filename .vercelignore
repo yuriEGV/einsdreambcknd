@@ -4,3 +4,4 @@ scripts
 *.md
 *.log
 node_modules
+public/assets
