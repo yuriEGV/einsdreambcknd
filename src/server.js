@@ -84,9 +84,8 @@ app.get([
   res.setHeader('Expires', '0');
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
   const apk260 = path.join(__dirname, '../public/einsdream-mobile-v2.6.0.apk');
-  const apk250 = path.join(__dirname, '../public/einsdream-mobile-v2.5.0.apk');
   const apkBase = path.join(__dirname, '../public/einsdream-mobile.apk');
-  const fileToServe = fs.existsSync(apk260) ? apk260 : (fs.existsSync(apk250) ? apk250 : apkBase);
+  const fileToServe = fs.existsSync(apk260) ? apk260 : apkBase;
   res.download(fileToServe, 'einsdream-mobile-v2.6.0.apk');
 });
 
@@ -97,9 +96,8 @@ app.get(/^\/public\/einsdream-mobile.*\.apk$/, (req, res) => {
   res.setHeader('Expires', '0');
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
   const apk260 = path.join(__dirname, '../public/einsdream-mobile-v2.6.0.apk');
-  const apk250 = path.join(__dirname, '../public/einsdream-mobile-v2.5.0.apk');
   const apkBase = path.join(__dirname, '../public/einsdream-mobile.apk');
-  const fileToServe = fs.existsSync(apk260) ? apk260 : (fs.existsSync(apk250) ? apk250 : apkBase);
+  const fileToServe = fs.existsSync(apk260) ? apk260 : apkBase;
   res.download(fileToServe, 'einsdream-mobile-v2.6.0.apk');
 });
 
@@ -113,9 +111,8 @@ app.get(['/download/apk', '/download/apk/:version'], (req, res) => {
   res.setHeader('Expires', '0');
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
   const apk260 = path.join(__dirname, '../public/einsdream-mobile-v2.6.0.apk');
-  const apk250 = path.join(__dirname, '../public/einsdream-mobile-v2.5.0.apk');
   const apkBase = path.join(__dirname, '../public/einsdream-mobile.apk');
-  const fileToServe = fs.existsSync(apk260) ? apk260 : (fs.existsSync(apk250) ? apk250 : apkBase);
+  const fileToServe = fs.existsSync(apk260) ? apk260 : apkBase;
   const targetFilename = req.params.version
     ? `einsdream-mobile-v${req.params.version}.apk`
     : 'einsdream-mobile-v2.6.0.apk';

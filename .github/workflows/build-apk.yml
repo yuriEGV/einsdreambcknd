@@ -105,10 +105,11 @@ jobs:
       - name: Commit & Push new APK to repository
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Clean up any older versioned APKs so repo stays well under Vercel 250MB limit
+          rm -f public/einsdream-mobile-v*.apk
           # Copy versioned copy
           cp public/einsdream-mobile.apk public/einsdream-mobile-v2.6.0.apk
-          git add public/einsdream-mobile.apk public/einsdream-mobile-v2.6.0.apk
+          git add -A public/
           # Always commit (--allow-empty handles case where binary is identical)
           git commit --allow-empty -m "chore(apk): update einsdream-mobile.apk Hermes bytecode v2.6.0 [skip actions]"
           git push origin main
