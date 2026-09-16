@@ -5,6 +5,19 @@ const correlatedEventSchema = new mongoose.Schema({
         type: Date,
         required: true
     },
+    eventNumber: {
+        type: Number
+    },
+    offsetMs: {
+        type: Number,
+        default: 0
+    },
+    timeLabel: {
+        type: String
+    },
+    peakDb: {
+        type: Number
+    },
     duration: {
         type: Number,
         default: 5
@@ -74,6 +87,10 @@ const nightSessionSchema = new mongoose.Schema({
         required: true,
         index: true
     },
+    sessionId: {
+        type: String,
+        index: true
+    },
     sessionDate: {
         type: String, // YYYY-MM-DD
         required: true,
@@ -86,6 +103,10 @@ const nightSessionSchema = new mongoose.Schema({
     endTime: {
         type: Date,
         required: true
+    },
+    totalDurationMs: {
+        type: Number,
+        default: 0
     },
     status: {
         type: String,
@@ -185,6 +206,24 @@ const nightSessionSchema = new mongoose.Schema({
         resumedAt: { type: Date },
         durationMs: { type: Number, default: 0 }
     }],
+    pauseIntervals: [{
+        startMs: { type: Number },
+        endMs: { type: Number },
+        durationMs: { type: Number }
+    }],
+    soundEvents: [{
+        eventNumber: { type: Number },
+        offsetMs: { type: Number },
+        timeLabel: { type: String },
+        type: { type: String },
+        peakDb: { type: Number },
+        timestamp: { type: Date }
+    }],
+    summary: {
+        snoreCount: { type: Number, default: 0 },
+        coughCount: { type: Number, default: 0 },
+        totalPausedMinutes: { type: Number, default: 0 }
+    },
     syncedFromMobile: {
         type: Boolean,
         default: false

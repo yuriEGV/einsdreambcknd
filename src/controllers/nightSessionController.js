@@ -13,10 +13,15 @@ import {
 export const syncNightSession = async (req, res) => {
     try {
         const userId = req.user.userId;
-        const {
+        let {
+            sessionId,
             sessionDate,
             startTime,
             endTime,
+            totalDurationMs,
+            pauseIntervals = [],
+            soundEvents = [],
+            summary = {},
             healthSource = 'health_connect',
             sleepSummary = {},
             heartRateSeries = [],
@@ -31,11 +36,62 @@ export const syncNightSession = async (req, res) => {
             snoreMetrics: clientSnore
         } = req.body;
 
-        if (!sessionDate || !startTime || !endTime) {
+        if (!startTime || !endTime) {
             return res.status(400).json({
-                message: 'sessionDate (YYYY-MM-DD), startTime y endTime son requeridos.'
+                message: 'startTime y endTime son requeridos.'
             });
         }
+
+        // Derive sessionDate YYYY-MM-DD from startTime if not supplied
+        if (!sessionDate) {
+            sessionDate = new Date(startTime).toISOString().split('T')[0];
+        }
+
+        const startTimestamp = new Date(startTime).getTime();
+        const endTimestamp = new Date(endTime).getTime();
+        if (!totalDurationMs) {
+            totalDurationMs = Math.max(0, endTimestamp - startTimestamp);
+        }
+
+        // Process and enumerate EinsDream 3.0 soundEvents (#1, #2, #3...)
+        let rawEvents = soundEvents.length > 0 ? [...soundEvents] : [...correlatedEvents];
+        rawEvents.sort((a, b) => (a.offsetMs || 0) - (b.offsetMs || 0));
+
+        const enumeratedEvents = rawEvents.map((evt, idx) => {
+            const eventNumber = idx + 1;
+            const offsetMs = evt.offsetMs !== undefined ? evt.offsetMs : (evt.relativeMs !== undefined ? evt.relativeMs : 0);
+            const evtDate = evt.timestamp ? new Date(evt.timestamp) : new Date(startTimestamp + offsetMs);
+            const timeLabel = evt.timeLabel || evtDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const eventType = evt.type || evt.eventType || 'noise';
+            const intensityDb = evt.peakDb ? Math.round(Math.abs(evt.peakDb)) : (evt.intensityDb || 55);
+
+            return {
+                eventNumber,
+                offsetMs,
+                timeLabel,
+                eventType,
+                type: eventType,
+                intensityDb,
+                peakDb: evt.peakDb !== undefined ? evt.peakDb : -Math.abs(intensityDb),
+                timestamp: evtDate,
+                duration: evt.duration || 5
+            };
+        });
+
+        // Correlate pauseIntervals into pauseSegments
+        let processedPauseSegments = req.body.pauseSegments || [];
+        if (pauseIntervals.length > 0 && processedPauseSegments.length === 0) {
+            processedPauseSegments = pauseIntervals.map(p => ({
+                pausedAt: new Date(startTimestamp + (p.startMs || 0)),
+                resumedAt: new Date(startTimestamp + (p.endMs || 0)),
+                durationMs: Math.max(0, (p.endMs || 0) - (p.startMs || 0))
+            }));
+        }
+
+        // Calculate total paused minutes
+        const totalPausedMinutes = summary.totalPausedMinutes !== undefined
+            ? summary.totalPausedMinutes
+            : Math.round(pauseIntervals.reduce((acc, p) => acc + (((p.endMs || 0) - (p.startMs || 0)) / 60000), 0));
 
         // Fetch user sleep baseline if exists
         const sleepProfile = await SleepProfile.findOne({ userId }).lean() || {};
@@ -46,7 +102,7 @@ export const syncNightSession = async (req, res) => {
             endTime,
             sleepSummary,
             heartRateSeries,
-            correlatedEvents,
+            correlatedEvents: enumeratedEvents,
             baselineProfile: sleepProfile
         });
 
@@ -81,18 +137,31 @@ export const syncNightSession = async (req, res) => {
             }
         }
 
-        calcSummary.totalAudioEvents = correlatedEvents.length || audioEventIds.length;
-        calcSummary.totalSnoreEvents = correlatedEvents.filter(e => e.eventType === 'snore').length;
-        calcSummary.totalCoughEvents = correlatedEvents.filter(e => e.eventType === 'cough').length;
+        calcSummary.totalAudioEvents = enumeratedEvents.length;
+        calcSummary.totalSnoreEvents = summary.snoreCount !== undefined
+            ? summary.snoreCount
+            : enumeratedEvents.filter(e => e.eventType === 'snore').length;
+        calcSummary.totalCoughEvents = summary.coughCount !== undefined
+            ? summary.coughCount
+            : enumeratedEvents.filter(e => e.eventType === 'cough').length;
+        calcSummary.totalPausedMinutes = totalPausedMinutes;
+
+        const consolidatedSummary = {
+            snoreCount: calcSummary.totalSnoreEvents,
+            coughCount: calcSummary.totalCoughEvents,
+            totalPausedMinutes
+        };
 
         // Find existing session for that date or create new
         const updatedSession = await NightSession.findOneAndUpdate(
             { userId, sessionDate },
             {
                 userId,
+                sessionId: sessionId || `night_${sessionDate.replace(/-/g, '_')}`,
                 sessionDate,
                 startTime: new Date(startTime),
                 endTime: new Date(endTime),
+                totalDurationMs,
                 status: 'completed',
                 healthSource,
                 sleepSummary,
@@ -100,13 +169,16 @@ export const syncNightSession = async (req, res) => {
                 respiratoryRateSeries,
                 oxygenSaturationSeries,
                 audioEvents: audioEventIds,
-                correlatedEvents,
+                correlatedEvents: enumeratedEvents,
+                soundEvents: enumeratedEvents,
+                pauseIntervals,
+                pauseSegments: processedPauseSegments,
+                summary: consolidatedSummary,
                 nightSummary: calcSummary,
                 einsdreamScore: finalScore,
                 dimensions: finalDimensions,
                 cardiovascular: finalCardio,
                 snoreMetrics: finalSnore,
-                pauseSegments: req.body.pauseSegments || [],
                 syncedFromMobile: true,
                 updatedAt: new Date()
             },
@@ -115,7 +187,7 @@ export const syncNightSession = async (req, res) => {
 
         res.status(200).json({
             success: true,
-            message: 'Sesión nocturna sincronizada correctamente con Health Connect y Einsdream Score.',
+            message: 'Telemetría nocturna EinsDream 3.0 sincronizada correctamente (CERO bytes de audio en la nube).',
             session: updatedSession
         });
     } catch (error) {
@@ -180,7 +252,7 @@ export const getNightSessionsHistory = async (req, res) => {
         const sessions = await NightSession.find(query)
             .sort({ sessionDate: -1 })
             .limit(limit)
-            .select('sessionDate startTime endTime status healthSource sleepSummary nightSummary einsdreamScore dimensions snoreMetrics cardiovascular pauseSegments syncedFromMobile correlatedEvents createdAt')
+            .select('sessionId totalDurationMs sessionDate startTime endTime status healthSource sleepSummary nightSummary einsdreamScore dimensions snoreMetrics cardiovascular pauseSegments pauseIntervals soundEvents summary syncedFromMobile correlatedEvents createdAt')
             .lean();
 
         res.json({

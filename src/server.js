@@ -8,17 +8,42 @@ import { fileURLToPath } from 'url';
 
 import apiRoutes from './routes/api.js';
 
+// ─── Critical Security: Strict JWT_SECRET Validation ─────────────────────────
+if (!process.env.JWT_SECRET) {
+  console.error('FATAL: JWT_SECRET environment variable is missing. Halting execution.');
+  process.exit(1);
+}
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// 1. Universal CORS middleware (must be first)
+// ─── Hardened CORS Policy (Vercel Frontend, Localhost, and Mobile Apps) ──────
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  'https://einsdreamfrntnd.vercel.app',
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://localhost:5000'
+].filter(Boolean);
+
+const isOriginAllowed = (origin) => {
+  if (!origin) return true; // Mobile native clients, curl, serverless internal
+  if (allowedOrigins.includes(origin)) return true;
+  if (origin.endsWith('.vercel.app')) return true; // Any Vercel preview or prod domain
+  return false;
+};
+
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
+  const origin = req.headers.origin;
+  if (isOriginAllowed(origin)) {
+    res.header('Access-Control-Allow-Origin', origin || '*');
+  }
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Api-Version');
+  res.header('Access-Control-Allow-Credentials', 'true');
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
@@ -26,16 +51,24 @@ app.use((req, res, next) => {
 });
 
 app.use(cors({
-  origin: '*',
+  origin: (origin, callback) => {
+    if (isOriginAllowed(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Acceso bloqueado por política de CORS'));
+    }
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization', 'X-Api-Version']
+  allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization', 'X-Api-Version'],
+  credentials: true
 }));
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-// Specific handler for versioned APK downloads (serves the latest v2.5.0 APK for all version queries)
+// Specific handler for versioned APK downloads (serves the latest v2.6.0 APK for all version queries)
 app.get([
+  '/public/einsdream-mobile-v2.6.0.apk',
   '/public/einsdream-mobile-v2.5.0.apk',
   '/public/einsdream-mobile-v2.4.0.apk',
   '/public/einsdream-mobile-v2.3.2.apk',
@@ -50,22 +83,24 @@ app.get([
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+  const apk260 = path.join(__dirname, '../public/einsdream-mobile-v2.6.0.apk');
   const apk250 = path.join(__dirname, '../public/einsdream-mobile-v2.5.0.apk');
   const apkBase = path.join(__dirname, '../public/einsdream-mobile.apk');
-  const fileToServe = fs.existsSync(apk250) ? apk250 : apkBase;
-  res.download(fileToServe, 'einsdream-mobile-v2.5.0.apk');
+  const fileToServe = fs.existsSync(apk260) ? apk260 : (fs.existsSync(apk250) ? apk250 : apkBase);
+  res.download(fileToServe, 'einsdream-mobile-v2.6.0.apk');
 });
 
-// Wildcard regex handler: any /public/einsdream-mobile*.apk request is served reliably with v2.5.0
+// Wildcard regex handler: any /public/einsdream-mobile*.apk request is served reliably with v2.6.0
 app.get(/^\/public\/einsdream-mobile.*\.apk$/, (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+  const apk260 = path.join(__dirname, '../public/einsdream-mobile-v2.6.0.apk');
   const apk250 = path.join(__dirname, '../public/einsdream-mobile-v2.5.0.apk');
   const apkBase = path.join(__dirname, '../public/einsdream-mobile.apk');
-  const fileToServe = fs.existsSync(apk250) ? apk250 : apkBase;
-  res.download(fileToServe, 'einsdream-mobile-v2.5.0.apk');
+  const fileToServe = fs.existsSync(apk260) ? apk260 : (fs.existsSync(apk250) ? apk250 : apkBase);
+  res.download(fileToServe, 'einsdream-mobile-v2.6.0.apk');
 });
 
 // Serve static files from the public directory
@@ -77,15 +112,16 @@ app.get(['/download/apk', '/download/apk/:version'], (req, res) => {
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+  const apk260 = path.join(__dirname, '../public/einsdream-mobile-v2.6.0.apk');
   const apk250 = path.join(__dirname, '../public/einsdream-mobile-v2.5.0.apk');
   const apkBase = path.join(__dirname, '../public/einsdream-mobile.apk');
-  const fileToServe = fs.existsSync(apk250) ? apk250 : apkBase;
+  const fileToServe = fs.existsSync(apk260) ? apk260 : (fs.existsSync(apk250) ? apk250 : apkBase);
   const targetFilename = req.params.version
     ? `einsdream-mobile-v${req.params.version}.apk`
-    : 'einsdream-mobile-v2.5.0.apk';
+    : 'einsdream-mobile-v2.6.0.apk';
   res.download(fileToServe, targetFilename, (err) => {
     if (err && !res.headersSent) {
-      res.redirect('/public/einsdream-mobile-v2.5.0.apk');
+      res.redirect('/public/einsdream-mobile-v2.6.0.apk');
     }
   });
 });
@@ -94,17 +130,18 @@ app.get(['/download/apk', '/download/apk/:version'], (req, res) => {
 app.get('/api/app-version', (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.json({
-    version: '2.5.0',
-    versionCode: 10,
+    version: '2.6.0',
+    versionCode: 11,
     apkUrl: '/download/apk',
-    apkFilename: 'einsdream-mobile-v2.5.0.apk',
-    releaseDate: '2026-09-15',
+    apkFilename: 'einsdream-mobile-v2.6.0.apk',
+    releaseDate: '2026-09-16',
+    architecture: 'EinsDream 3.0 (Local Audio Architecture)',
     changelog: [
-      'Pausa de privacidad: silencia el micrófono sin terminar la noche ni cambiar fecha',
-      'Línea de tiempo interactiva ampliada con marcadores grandes, píldoras y saltos de 30s/1m',
-      'Sincronización exclusiva de estadísticas y métricas hacia la nube desde pantalla Score',
-      'Protección total de privacidad sin registro durante llamadas o momentos personales',
-      'Soporte completo de estadísticas correlacionadas en la consola web de administración'
+      'EinsDream 3.0: Arquitectura de Audio 100% Local (CERO bytes de audio en la nube)',
+      'Telemetría pura JSON (< 20 KB) para sincronización con MongoDB Atlas y Dashboard Web',
+      'Barra de progreso clásica con marcadores clicables para reproducción directa on-device',
+      'Seguridad criptográfica reforzada: Hashing con bcrypt (salt 12) y eliminación de backdoors',
+      'Dashboard Web purificado: visualización de analíticas, tendencias y scores sin dependencias de audio'
     ]
   });
 });
@@ -144,9 +181,9 @@ app.get('/', async (req, res) => {
   await connectDB();
   res.json({
     status: 'ONLINE',
-    message: 'Einsdream Backend API is running',
-    version: '2.5.0',
-    apkVersion: '2.5.0',
+    message: 'Einsdream Backend API is running (EinsDream 3.0 Local Audio Architecture)',
+    version: '2.6.0',
+    apkVersion: '2.6.0',
     apkUrl: '/download/apk',
     dbStatus: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
     dbError: lastDbError,

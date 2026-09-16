@@ -694,6 +694,24 @@ export default function RecordingScreen({ token, onLogout }) {
     };
 
     // Seek to a specific position in the current track
+        // Reproduce localmente en el celular al tocar una marca de evento (EinsDream 3.0)
+    const playEventAtTime = async (offsetMs, rec) => {
+        try {
+            if (rec && (playingUri !== rec.id && playingUri !== rec.uri)) {
+                await handlePlayPause(rec);
+            }
+            if (soundRef.current) {
+                const targetMs = Math.max(0, Math.round(offsetMs));
+                await soundRef.current.setPositionAsync(targetMs);
+                await soundRef.current.playAsync();
+                setPlaying(true);
+                setPosMs(targetMs);
+            }
+        } catch (err) {
+            console.warn('[playEventAtTime]', err.message);
+        }
+    };
+
     const handleSeek = async (pct) => {
         if (!soundRef.current || !durMs) return;
         try {
@@ -1207,17 +1225,57 @@ export default function RecordingScreen({ token, onLogout }) {
             let successCount = 0;
             for (const session of toSync.slice(0, 10)) {
                 try {
-                    await axios.post(`${API_URL}/night-sessions`, session, {
+                    // Formato EinsDream 3.0: Solo Telemetría JSON (< 20 KB), CERO audio a la nube
+                    const soundEvts = (session.soundEvents || session.correlatedEvents || []).map(e => ({
+                        offsetMs: e.offsetMs !== undefined ? e.offsetMs : (e.relativeMs !== undefined ? e.relativeMs : 0),
+                        timeLabel: e.timeLabel || '',
+                        type: e.type || e.eventType || 'snore',
+                        eventType: e.eventType || e.type || 'snore',
+                        peakDb: e.peakDb !== undefined ? e.peakDb : -Math.abs(e.intensityDb || 25),
+                        intensityDb: e.intensityDb || Math.abs(e.peakDb || 55),
+                        duration: e.duration || 5
+                    }));
+
+                    const pauseInts = (session.pauseIntervals || session.pauseSegments || []).map(p => ({
+                        startMs: p.startMs !== undefined ? p.startMs : (p.pausedAt ? new Date(p.pausedAt).getTime() - new Date(session.startTime).getTime() : 0),
+                        endMs: p.endMs !== undefined ? p.endMs : (p.resumedAt ? new Date(p.resumedAt).getTime() - new Date(session.startTime).getTime() : (p.durationMs || 0)),
+                        durationMs: p.durationMs || 0
+                    }));
+
+                    const payload = {
+                        sessionId: session.sessionId || `night_${(session.sessionDate || 'session').replace(/-/g, '_')}`,
+                        sessionDate: session.sessionDate,
+                        startTime: session.startTime,
+                        endTime: session.endTime,
+                        totalDurationMs: session.totalDurationMs || (session.sleepSummary?.durationMinutes ? session.sleepSummary.durationMinutes * 60000 : 0),
+                        pauseIntervals: pauseInts,
+                        soundEvents: soundEvts,
+                        summary: {
+                            snoreCount: session.summary?.snoreCount ?? soundEvts.filter(e => e.eventType === 'snore').length,
+                            coughCount: session.summary?.coughCount ?? soundEvts.filter(e => e.eventType === 'cough').length,
+                            totalPausedMinutes: session.summary?.totalPausedMinutes ?? Math.round(pauseInts.reduce((acc, p) => acc + ((p.durationMs || (p.endMs - p.startMs)) / 60000), 0))
+                        },
+                        einsdreamScore: session.einsdreamScore,
+                        dimensions: session.dimensions,
+                        sleepSummary: session.sleepSummary,
+                        cardiovascular: session.cardiovascular,
+                        snoreMetrics: session.snoreMetrics
+                    };
+
+                    await axios.post(`${API_URL}/night-sessions`, payload, {
                         headers: { Authorization: `Bearer ${token}` },
                         timeout: 12000,
                     });
                     successCount++;
-                } catch (_) {}
+                } catch (err) {
+                    console.warn('[syncStatsToServer night error]', err.message);
+                }
             }
 
             Alert.alert(
                 '✅ Sincronizado con Sistema Web',
-                `${successCount} de ${Math.min(toSync.length, 10)} noches enviadas al dashboard.\nEl sistema web ya puede procesar tus estadísticas.`
+                `${successCount} de ${Math.min(toSync.length, 10)} noches enviadas al dashboard (EinsDream 3.0 JSON Telemetría).
+El sistema web ya puede procesar tus estadísticas.`
             );
         } catch (e) {
             Alert.alert('Error de sincronización', 'Verifica tu conexión a internet.');
@@ -1233,7 +1291,7 @@ export default function RecordingScreen({ token, onLogout }) {
             <View style={s.topHeader}>
                 <Text style={s.mainAppTitle}>EinsDream</Text>
                 <View style={s.versionBadge}>
-                    <Text style={s.versionText}>v2.5.0 (Estable)</Text>
+                    <Text style={s.versionText}>v2.6.0 (Estable)</Text>
                 </View>
             </View>
 
@@ -1795,20 +1853,16 @@ export default function RecordingScreen({ token, onLogout }) {
                                                                     }}
                                                                 />
 
-                                                                {/* Puntos de eventos — más grandes y con ícono */}
+                                                                {/* Puntos de eventos — Diseño Clásico Imagen 4: puntos limpios clicables */}
                                                                 {events.map((evt, i) => {
                                                                     const leftPct = nightDurationMs > 0
-                                                                        ? Math.min(96, Math.max(1, (evt.relativeMs / nightDurationMs) * 100))
+                                                                        ? Math.min(96, Math.max(2, (evt.relativeMs / nightDurationMs) * 100))
                                                                         : 0;
                                                                     const dotColor = evColor(evt.eventType);
-                                                                    const dotIcon = evt.eventType === 'snore' ? '😴'
-                                                                        : evt.eventType === 'cough' ? '🤧'
-                                                                        : evt.eventType === 'voice' ? '🗣'
-                                                                        : evt.eventType === 'breathing' ? '🫁'
-                                                                        : '🔊';
                                                                     return (
                                                                         <TouchableOpacity
                                                                             key={i}
+                                                                            activeOpacity={0.8}
                                                                             style={[
                                                                                 s.timelineDot,
                                                                                 {
@@ -1821,12 +1875,9 @@ export default function RecordingScreen({ token, onLogout }) {
                                                                                 }
                                                                             ]}
                                                                             onPress={() => {
-                                                                                if (!isSelected) handlePlayPause(rec);
-                                                                                else handleSeek(evt.relativeMs / nightDurationMs);
+                                                                                playEventAtTime(evt.relativeMs, rec);
                                                                             }}
-                                                                        >
-                                                                            <Text style={{ fontSize: 9 }}>{dotIcon}</Text>
-                                                                        </TouchableOpacity>
+                                                                        />
                                                                     );
                                                                 })}
 
@@ -1854,34 +1905,40 @@ export default function RecordingScreen({ token, onLogout }) {
                                                                 </View>
                                                             )}
 
-                                                            {/* Lista horizontal de eventos navegables */}
+                                                            {/* Referencia pequeña y limpia de eventos acústicos (EinsDream 3.0) */}
                                                             {events.length > 0 && (
-                                                                <ScrollView
-                                                                    horizontal
-                                                                    showsHorizontalScrollIndicator={false}
-                                                                    style={{ marginTop: 7 }}
-                                                                    contentContainerStyle={{ gap: 5, paddingRight: 4 }}
-                                                                >
-                                                                    {events.map((evt, i) => (
-                                                                        <TouchableOpacity
-                                                                            key={i}
-                                                                            style={[
-                                                                                s.evtPill,
-                                                                                { borderColor: evColor(evt.eventType) + '66' }
-                                                                            ]}
-                                                                            onPress={() => {
-                                                                                if (!isSelected) { handlePlayPause(rec); return; }
-                                                                                handleSeek(evt.relativeMs / nightDurationMs);
-                                                                            }}
-                                                                        >
-                                                                            <Text style={{ fontSize: 10 }}>
-                                                                                {evt.eventType === 'snore' ? '😴' : evt.eventType === 'cough' ? '🤧' : evt.eventType === 'voice' ? '🗣' : evt.eventType === 'breathing' ? '🫁' : '🔊'}
-                                                                            </Text>
-                                                                            <Text style={{ color: '#cbd5e1', fontSize: 9 }}>{fmtMs(evt.relativeMs)}</Text>
-                                                                            <Text style={{ color: evColor(evt.eventType), fontSize: 9, fontWeight: '800' }}>→</Text>
-                                                                        </TouchableOpacity>
-                                                                    ))}
-                                                                </ScrollView>
+                                                                <View style={{ marginTop: 8, gap: 4 }}>
+                                                                    {events.slice(0, 8).map((evt, i) => {
+                                                                        const timeStr = evt.timeLabel || fmtMs(evt.relativeMs);
+                                                                        const typeLabel = evt.eventType === 'snore' ? 'Ronquido' : evt.eventType === 'cough' ? 'Tos' : evt.eventType === 'voice' ? 'Voz' : evt.eventType === 'breathing' ? 'Respiración' : evt.eventType;
+                                                                        return (
+                                                                            <TouchableOpacity
+                                                                                key={i}
+                                                                                activeOpacity={0.7}
+                                                                                onPress={() => playEventAtTime(evt.relativeMs, rec)}
+                                                                                style={{
+                                                                                    flexDirection: 'row',
+                                                                                    alignItems: 'center',
+                                                                                    justifyContent: 'space-between',
+                                                                                    paddingVertical: 5,
+                                                                                    paddingHorizontal: 8,
+                                                                                    borderRadius: 6,
+                                                                                    backgroundColor: 'rgba(255,255,255,0.03)',
+                                                                                    borderWidth: 1,
+                                                                                    borderColor: 'rgba(255,255,255,0.05)'
+                                                                                }}
+                                                                            >
+                                                                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                                                                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: evColor(evt.eventType) }} />
+                                                                                    <Text style={{ color: '#cbd5e1', fontSize: 11, fontWeight: '700' }}>{timeStr}</Text>
+                                                                                    <Text style={{ color: '#64748b', fontSize: 11 }}>—</Text>
+                                                                                    <Text style={{ color: evColor(evt.eventType), fontSize: 11, fontWeight: '600' }}>{typeLabel}</Text>
+                                                                                </View>
+                                                                                <Text style={{ color: '#38bdf8', fontSize: 10, fontWeight: '700' }}>▶ Reproducir</Text>
+                                                                            </TouchableOpacity>
+                                                                        );
+                                                                    })}
+                                                                </View>
                                                             )}
                                                         </View>
                                                     )}
@@ -2582,9 +2639,9 @@ const s = StyleSheet.create({
 
     // ─── Timeline Bar & Event Navigation ──────────────────────────────────
     timelineBar: {
-        height: 52,
-        backgroundColor: '#0f172a',
-        borderRadius: 10,
+        height: 38,
+        backgroundColor: '#172033',
+        borderRadius: 12,
         position: 'relative',
         overflow: 'visible',
         borderWidth: 1,
@@ -2602,15 +2659,13 @@ const s = StyleSheet.create({
     timelineDot: {
         position: 'absolute',
         top: '50%',
-        marginTop: -12,
-        marginLeft: -12,
-        width: 24,
-        height: 24,
-        borderRadius: 12,
-        justifyContent: 'center',
-        alignItems: 'center',
-        borderWidth: 1.5,
-        borderColor: '#ffffff',
+        marginTop: -7,
+        marginLeft: -7,
+        width: 14,
+        height: 14,
+        borderRadius: 7,
+        borderWidth: 2,
+        borderColor: '#0f172a',
         zIndex: 20,
     },
     timelinePlayhead: {

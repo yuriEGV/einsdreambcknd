@@ -16,7 +16,7 @@ if not os.path.exists(apk_path):
     print(f"Error: {apk_path} not found!")
     sys.exit(1)
 
-print(f"Patching metadata in {apk_path} to v2.4.0...")
+print(f"Patching metadata in {apk_path} to v2.6.0...")
 
 entries = {}
 with zipfile.ZipFile(apk_path, 'r') as z_in:
@@ -37,53 +37,29 @@ u231 = '2.3.1'.encode('utf-16le')
 u232 = '2.3.2'.encode('utf-16le')
 u240 = '2.4.0'.encode('utf-16le')
 u250 = '2.5.0'.encode('utf-16le')
+u260 = '2.6.0'.encode('utf-16le')
 
-if u240 in manifest:
-    new_manifest = manifest.replace(u240, u250)
-    assert len(new_manifest) == len(manifest), "Manifest length changed!"
-    entries[manifest_info] = new_manifest
-    print("Successfully replaced UTF-16LE '2.4.0' with '2.5.0' in AndroidManifest.xml")
-elif u232 in manifest:
-    new_manifest = manifest.replace(u232, u250)
-    assert len(new_manifest) == len(manifest), "Manifest length changed!"
-    entries[manifest_info] = new_manifest
-    print("Successfully replaced UTF-16LE '2.3.2' with '2.5.0' in AndroidManifest.xml")
-elif u231 in manifest:
-    new_manifest = manifest.replace(u231, u250)
-    assert len(new_manifest) == len(manifest), "Manifest length changed!"
-    entries[manifest_info] = new_manifest
-    print("Successfully replaced UTF-16LE '2.3.1' with '2.5.0' in AndroidManifest.xml")
-elif u230 in manifest:
-    new_manifest = manifest.replace(u230, u250)
-    assert len(new_manifest) == len(manifest), "Manifest length changed!"
-    entries[manifest_info] = new_manifest
-    print("Successfully replaced UTF-16LE '2.3.0' with '2.5.0' in AndroidManifest.xml")
-elif u220 in manifest:
-    new_manifest = manifest.replace(u220, u250)
-    assert len(new_manifest) == len(manifest), "Manifest length changed!"
-    entries[manifest_info] = new_manifest
-    print("Successfully replaced UTF-16LE '2.2.0' with '2.5.0' in AndroidManifest.xml")
-elif u210 in manifest:
-    new_manifest = manifest.replace(u210, u250)
-    assert len(new_manifest) == len(manifest), "Manifest length changed!"
-    entries[manifest_info] = new_manifest
-    print("Successfully replaced UTF-16LE '2.1.0' with '2.5.0' in AndroidManifest.xml")
-elif u100 in manifest:
-    new_manifest = manifest.replace(u100, u250)
-    assert len(new_manifest) == len(manifest), "Manifest length changed!"
-    entries[manifest_info] = new_manifest
-    print("Successfully replaced UTF-16LE '1.0.0' with '2.5.0' in AndroidManifest.xml")
-elif u250 in manifest:
-    print("Notice: '2.5.0' already in AndroidManifest.xml")
+for old_u in [u250, u240, u232, u231, u230, u220, u210, u100]:
+    if old_u in manifest:
+        new_manifest = manifest.replace(old_u, u260)
+        assert len(new_manifest) == len(manifest), "Manifest length changed!"
+        entries[manifest_info] = new_manifest
+        print(f"Successfully replaced UTF-16LE version with '2.6.0' in AndroidManifest.xml")
+        break
 else:
-    print("Notice: no matching UTF-16LE version found in manifest")
+    if u260 in manifest:
+        print("Notice: '2.6.0' already in AndroidManifest.xml")
+    else:
+        print("Notice: no matching UTF-16LE version found in manifest")
 
 app_config_info = next((i for i in entries if i.filename == 'assets/app.config'), None)
 if app_config_info:
     cfg = entries[app_config_info]
-    new_cfg = cfg.replace(b'"2.4.0"', b'"2.5.0"').replace(b'"2.3.2"', b'"2.5.0"').replace(b'"2.3.1"', b'"2.5.0"').replace(b'"2.3.0"', b'"2.5.0"').replace(b'"2.2.0"', b'"2.5.0"').replace(b'"2.1.0"', b'"2.5.0"').replace(b'"1.1.4"', b'"2.5.0"').replace(b'"1.0.0"', b'"2.5.0"')
+    new_cfg = cfg
+    for v in [b'"2.5.0"', b'"2.4.0"', b'"2.3.2"', b'"2.3.1"', b'"2.3.0"', b'"2.2.0"', b'"2.1.0"', b'"1.1.4"', b'"1.0.0"']:
+        new_cfg = new_cfg.replace(v, b'"2.6.0"')
     entries[app_config_info] = new_cfg
-    print("Successfully updated version to '2.5.0' in assets/app.config")
+    print("Successfully updated version to '2.6.0' in assets/app.config")
 
 # Write back preserving compression
 with zipfile.ZipFile(apk_path, 'w', allowZip64=True) as z_out:
@@ -93,7 +69,7 @@ with zipfile.ZipFile(apk_path, 'w', allowZip64=True) as z_out:
 # Verify
 with zipfile.ZipFile(apk_path, 'r') as z_check:
     m = z_check.read('AndroidManifest.xml')
-    assert u250 in m, "Verification failed: 2.5.0 not found in AndroidManifest.xml!"
+    assert u260 in m, "Verification failed: 2.6.0 not found in AndroidManifest.xml!"
     assert 'META-INF/services/kotlinx.coroutines.internal.MainDispatcherFactory' in z_check.namelist(), "MainDispatcherFactory missing!"
 
 print(f"Metadata patch complete and verified for {apk_path}")

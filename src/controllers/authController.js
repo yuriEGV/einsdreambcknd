@@ -2,30 +2,14 @@ import mongoose from 'mongoose';
 import User from '../models/User.js';
 import LoginLog from '../models/LoginLog.js';
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 import { OAuth2Client } from 'google-auth-library';
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
-const JWT_SECRET = process.env.JWT_SECRET || 'einsdream_super_secret_jwt_key_2026';
-
-// Helper to auto-seed default admin if database is empty
-const ensureDefaultAdmin = async (targetEmail) => {
-    if (targetEmail.toLowerCase() === 'yuri@einsdream.cl') {
-        let admin = await User.findOne({ email: 'yuri@einsdream.cl' });
-        if (!admin) {
-            console.log('[AUTH] Auto-creating default admin account for yuri@einsdream.cl...');
-            admin = new User({
-                email: 'yuri@einsdream.cl',
-                password: '123456',
-                phone: '+56912345678',
-                role: 'admin',
-                consentGiven: true
-            });
-            await admin.save();
-        }
-        return admin;
-    }
-    return null;
-};
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+    console.error('FATAL: JWT_SECRET environment variable is missing.');
+}
 
 // Basic Email/Password Register
 export const register = async (req, res) => {
@@ -45,9 +29,12 @@ export const register = async (req, res) => {
 
         const role = email === 'yuri@einsdream.cl' ? 'admin' : 'user';
 
+        // Cryptographic password hashing (salt 12)
+        const hashedPassword = await bcrypt.hash(password, 12);
+
         user = new User({
             email,
-            password,
+            password: hashedPassword,
             phone: phone || '+56900000000',
             role,
             consentGiven: true
@@ -92,9 +79,6 @@ export const login = async (req, res) => {
 
         email = email.trim().toLowerCase();
 
-        // Check if admin needs auto-seeding
-        await ensureDefaultAdmin(email);
-
         let user = await User.findOne({ email });
 
         if (!user) {
@@ -102,8 +86,19 @@ export const login = async (req, res) => {
             return res.status(400).json({ message: 'Usuario no encontrado. Verifica tu correo.' });
         }
 
-        // String compare (or bcrypt)
-        if (user.password !== password) {
+        // Cryptographic verification with automatic upgrade for legacy plain text passwords
+        let isMatch = false;
+        if (user.password && (user.password.startsWith('$2a$') || user.password.startsWith('$2b$') || user.password.startsWith('$2y$'))) {
+            isMatch = await bcrypt.compare(password, user.password);
+        } else if (user.password === password) {
+            // Re-hash legacy password with bcrypt (salt 12) transparently
+            isMatch = true;
+            user.password = await bcrypt.hash(password, 12);
+            await user.save();
+            console.log('[LOGIN] Legacy password upgraded to bcrypt for user:', email);
+        }
+
+        if (!isMatch) {
             console.log('[LOGIN] Failed: Password mismatch for:', email);
             return res.status(400).json({ message: 'Contraseña incorrecta' });
         }
