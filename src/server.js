@@ -68,7 +68,7 @@ app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 // Specific handler for versioned APK downloads (serves the latest v2.9.2 APK for all version queries)
 app.get([
-  '/public/einsdream-mobile-v2.9.2.apk',
+  '/public/einsdream-mobile-v2.9.3.apk',
   '/public/einsdream-mobile-v2.9.1.apk',
   '/public/einsdream-mobile-v2.9.0.apk',
   '/public/einsdream-mobile-v2.8.0.apk',
@@ -88,13 +88,14 @@ app.get([
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
-  const apk292 = path.join(__dirname, '../public/einsdream-mobile-v2.9.2.apk');
+  const apk293 = path.join(__dirname, '../public/einsdream-mobile-v2.9.3.apk');
+        const apk292 = path.join(__dirname, '../public/einsdream-mobile-v2.9.3.apk');
   const apk291 = path.join(__dirname, '../public/einsdream-mobile-v2.9.1.apk');
   const apk290 = path.join(__dirname, '../public/einsdream-mobile-v2.9.0.apk');
   const apk280 = path.join(__dirname, '../public/einsdream-mobile-v2.8.0.apk');
   const apkBase = path.join(__dirname, '../public/einsdream-mobile.apk');
   const fileToServe = fs.existsSync(apk292) ? apk292 : (fs.existsSync(apk291) ? apk291 : (fs.existsSync(apk290) ? apk290 : (fs.existsSync(apk280) ? apk280 : apkBase)));
-  res.download(fileToServe, 'einsdream-mobile-v2.9.2.apk');
+  res.download(fileToServe, 'einsdream-mobile-v2.9.3.apk');
 });
 
 // Wildcard regex handler: any /public/einsdream-mobile*.apk request is served reliably with v2.9.2
@@ -103,13 +104,14 @@ app.get(/^\/public\/einsdream-mobile.*\.apk$/, (req, res) => {
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
-  const apk292 = path.join(__dirname, '../public/einsdream-mobile-v2.9.2.apk');
+  const apk293 = path.join(__dirname, '../public/einsdream-mobile-v2.9.3.apk');
+        const apk292 = path.join(__dirname, '../public/einsdream-mobile-v2.9.3.apk');
   const apk291 = path.join(__dirname, '../public/einsdream-mobile-v2.9.1.apk');
   const apk290 = path.join(__dirname, '../public/einsdream-mobile-v2.9.0.apk');
   const apk280 = path.join(__dirname, '../public/einsdream-mobile-v2.8.0.apk');
   const apkBase = path.join(__dirname, '../public/einsdream-mobile.apk');
   const fileToServe = fs.existsSync(apk292) ? apk292 : (fs.existsSync(apk291) ? apk291 : (fs.existsSync(apk290) ? apk290 : (fs.existsSync(apk280) ? apk280 : apkBase)));
-  res.download(fileToServe, 'einsdream-mobile-v2.9.2.apk');
+  res.download(fileToServe, 'einsdream-mobile-v2.9.3.apk');
 });
 
 // Serve static files from the public directory
@@ -121,7 +123,8 @@ app.get(['/download/apk', '/download/apk/:version'], (req, res) => {
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
-  const apk292 = path.join(__dirname, '../public/einsdream-mobile-v2.9.2.apk');
+  const apk293 = path.join(__dirname, '../public/einsdream-mobile-v2.9.3.apk');
+        const apk292 = path.join(__dirname, '../public/einsdream-mobile-v2.9.3.apk');
   const apk291 = path.join(__dirname, '../public/einsdream-mobile-v2.9.1.apk');
   const apk290 = path.join(__dirname, '../public/einsdream-mobile-v2.9.0.apk');
   const apk280 = path.join(__dirname, '../public/einsdream-mobile-v2.8.0.apk');
@@ -129,10 +132,10 @@ app.get(['/download/apk', '/download/apk/:version'], (req, res) => {
   const fileToServe = fs.existsSync(apk292) ? apk292 : (fs.existsSync(apk291) ? apk291 : (fs.existsSync(apk290) ? apk290 : (fs.existsSync(apk280) ? apk280 : apkBase)));
   const targetFilename = req.params.version
     ? `einsdream-mobile-v${req.params.version}.apk`
-    : 'einsdream-mobile-v2.9.2.apk';
+    : 'einsdream-mobile-v2.9.3.apk';
   res.download(fileToServe, targetFilename, (err) => {
     if (err && !res.headersSent) {
-      res.redirect('/public/einsdream-mobile-v2.9.2.apk');
+      res.redirect('/public/einsdream-mobile-v2.9.3.apk');
     }
   });
 });
@@ -141,14 +144,18 @@ app.get(['/download/apk', '/download/apk/:version'], (req, res) => {
 app.get('/api/app-version', (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.json({
-    version: '2.9.2',
-    versionCode: 16,
+    version: "2.9.3",
+    versionCode: 17,
     apkUrl: '/download/apk',
-    apkFilename: 'einsdream-mobile-v2.9.2.apk',
+    apkFilename: 'einsdream-mobile-v2.9.3.apk',
     releaseDate: '2026-09-21',
-    architecture: 'EinsDream 3.0 (Local Audio + Senior-Friendly UI)',
+    architecture: 'EinsDream 3.0 (Continuous Audio + Peak Timeline + Senior UI)',
     changelog: [
-      'v2.9.2: Solución definitiva al error de audio con formato nativo PCM 16-bit 16000 Hz',
+      'v2.9.3: Restauración de Línea de Tiempo con puntos de picos acústicos interactivos',
+            'v2.9.3: Tarjeta inspectora de metadatos (hora, decibeles, certeza IA y navegación entre picos)',
+            'v2.9.3: Reproducción continua nocturna (de corrido) y viaje fluido con la barra de progreso',
+            'v2.9.3: Eliminación de audios aislados de 4 segundos e integración directa al reproductor',
+            'v2.9.2: Solución definitiva al error de audio con formato nativo PCM 16-bit 16000 Hz',
       'v2.9.2: Restauración de los 20-25 eventos acústicos realistas en todas las noches',
       'v2.9.2: Rediseño total de la pestaña Audios Nocturnos para Adultos Mayores (selector de días y reproductor gigante)',
       'v2.9.1: Corrección completa de reproducción de audio sin bloqueos de telemetría',
