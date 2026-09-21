@@ -4,6 +4,7 @@ import { Storage } from '@google-cloud/storage';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import mongoose from 'mongoose';
 import AudioSession from '../models/AudioSession.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -269,9 +270,12 @@ export const bulkUploadMetadata = async (req, res) => {
  */
 export const getAudioById = async (req, res) => {
     try {
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+            return res.status(404).json({ message: 'Session not found', isLocalTelemetry: true });
+        }
         const session = await AudioSession.findById(req.params.id).select('+audioBase64');
         if (!session) {
-            return res.status(404).json({ message: 'Session not found' });
+            return res.status(404).json({ message: 'Session not found', isLocalTelemetry: true });
         }
 
         let audioUrl = session.audioUrl || null;
