@@ -42,17 +42,18 @@ u270 = '2.7.0'.encode('utf-16le')
 u280 = '2.8.0'.encode('utf-16le')
 u290 = '2.9.0'.encode('utf-16le')
 u291 = '2.9.1'.encode('utf-16le')
+u292 = '2.9.2'.encode('utf-16le')
 
-for old_u in [u290, u280, u270, u260, u250, u240, u232, u231, u230, u220, u210, u100]:
+for old_u in [u291, u290, u280, u270, u260, u250, u240, u232, u231, u230, u220, u210, u100]:
     if old_u in manifest:
-        new_manifest = manifest.replace(old_u, u291)
+        new_manifest = manifest.replace(old_u, u292)
         assert len(new_manifest) == len(manifest), "Manifest length changed!"
         entries[manifest_info] = new_manifest
-        print(f"Successfully replaced UTF-16LE version with '2.9.1' in AndroidManifest.xml")
+        print(f"Successfully replaced UTF-16LE version with '2.9.2' in AndroidManifest.xml")
         break
 else:
-    if u291 in manifest:
-        print("Notice: '2.9.1' already in AndroidManifest.xml")
+    if u292 in manifest:
+        print("Notice: '2.9.2' already in AndroidManifest.xml")
     else:
         print("Notice: no matching UTF-16LE version found in manifest")
 
@@ -60,10 +61,10 @@ app_config_info = next((i for i in entries if i.filename == 'assets/app.config')
 if app_config_info:
     cfg = entries[app_config_info]
     new_cfg = cfg
-    for v in [b'"2.9.0"', b'"2.8.0"', b'"2.7.0"', b'"2.6.0"', b'"2.5.0"', b'"2.4.0"', b'"2.3.2"', b'"2.3.1"', b'"2.3.0"', b'"2.2.0"', b'"2.1.0"', b'"1.1.4"', b'"1.0.0"']:
-        new_cfg = new_cfg.replace(v, b'"2.9.1"')
+    for v in [b'"2.9.1"', b'"2.9.0"', b'"2.8.0"', b'"2.7.0"', b'"2.6.0"', b'"2.5.0"', b'"2.4.0"', b'"2.3.2"', b'"2.3.1"', b'"2.3.0"', b'"2.2.0"', b'"2.1.0"', b'"1.1.4"', b'"1.0.0"']:
+        new_cfg = new_cfg.replace(v, b'"2.9.2"')
     entries[app_config_info] = new_cfg
-    print("Successfully updated version to '2.9.1' in assets/app.config")
+    print("Successfully updated version to '2.9.2' in assets/app.config")
 
 # Write back preserving compression
 with zipfile.ZipFile(apk_path, 'w', allowZip64=True) as z_out:

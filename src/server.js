@@ -66,8 +66,9 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-// Specific handler for versioned APK downloads (serves the latest v2.9.1 APK for all version queries)
+// Specific handler for versioned APK downloads (serves the latest v2.9.2 APK for all version queries)
 app.get([
+  '/public/einsdream-mobile-v2.9.2.apk',
   '/public/einsdream-mobile-v2.9.1.apk',
   '/public/einsdream-mobile-v2.9.0.apk',
   '/public/einsdream-mobile-v2.8.0.apk',
@@ -87,28 +88,28 @@ app.get([
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+  const apk292 = path.join(__dirname, '../public/einsdream-mobile-v2.9.2.apk');
   const apk291 = path.join(__dirname, '../public/einsdream-mobile-v2.9.1.apk');
   const apk290 = path.join(__dirname, '../public/einsdream-mobile-v2.9.0.apk');
   const apk280 = path.join(__dirname, '../public/einsdream-mobile-v2.8.0.apk');
-  const apk270 = path.join(__dirname, '../public/einsdream-mobile-v2.7.0.apk');
   const apkBase = path.join(__dirname, '../public/einsdream-mobile.apk');
-  const fileToServe = fs.existsSync(apk291) ? apk291 : (fs.existsSync(apk290) ? apk290 : (fs.existsSync(apk280) ? apk280 : (fs.existsSync(apk270) ? apk270 : apkBase)));
-  res.download(fileToServe, 'einsdream-mobile-v2.9.1.apk');
+  const fileToServe = fs.existsSync(apk292) ? apk292 : (fs.existsSync(apk291) ? apk291 : (fs.existsSync(apk290) ? apk290 : (fs.existsSync(apk280) ? apk280 : apkBase)));
+  res.download(fileToServe, 'einsdream-mobile-v2.9.2.apk');
 });
 
-// Wildcard regex handler: any /public/einsdream-mobile*.apk request is served reliably with v2.9.1
+// Wildcard regex handler: any /public/einsdream-mobile*.apk request is served reliably with v2.9.2
 app.get(/^\/public\/einsdream-mobile.*\.apk$/, (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+  const apk292 = path.join(__dirname, '../public/einsdream-mobile-v2.9.2.apk');
   const apk291 = path.join(__dirname, '../public/einsdream-mobile-v2.9.1.apk');
   const apk290 = path.join(__dirname, '../public/einsdream-mobile-v2.9.0.apk');
   const apk280 = path.join(__dirname, '../public/einsdream-mobile-v2.8.0.apk');
-  const apk270 = path.join(__dirname, '../public/einsdream-mobile-v2.7.0.apk');
   const apkBase = path.join(__dirname, '../public/einsdream-mobile.apk');
-  const fileToServe = fs.existsSync(apk291) ? apk291 : (fs.existsSync(apk290) ? apk290 : (fs.existsSync(apk280) ? apk280 : (fs.existsSync(apk270) ? apk270 : apkBase)));
-  res.download(fileToServe, 'einsdream-mobile-v2.9.1.apk');
+  const fileToServe = fs.existsSync(apk292) ? apk292 : (fs.existsSync(apk291) ? apk291 : (fs.existsSync(apk290) ? apk290 : (fs.existsSync(apk280) ? apk280 : apkBase)));
+  res.download(fileToServe, 'einsdream-mobile-v2.9.2.apk');
 });
 
 // Serve static files from the public directory
@@ -120,18 +121,18 @@ app.get(['/download/apk', '/download/apk/:version'], (req, res) => {
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+  const apk292 = path.join(__dirname, '../public/einsdream-mobile-v2.9.2.apk');
   const apk291 = path.join(__dirname, '../public/einsdream-mobile-v2.9.1.apk');
   const apk290 = path.join(__dirname, '../public/einsdream-mobile-v2.9.0.apk');
   const apk280 = path.join(__dirname, '../public/einsdream-mobile-v2.8.0.apk');
-  const apk270 = path.join(__dirname, '../public/einsdream-mobile-v2.7.0.apk');
   const apkBase = path.join(__dirname, '../public/einsdream-mobile.apk');
-  const fileToServe = fs.existsSync(apk291) ? apk291 : (fs.existsSync(apk290) ? apk290 : (fs.existsSync(apk280) ? apk280 : (fs.existsSync(apk270) ? apk270 : apkBase)));
+  const fileToServe = fs.existsSync(apk292) ? apk292 : (fs.existsSync(apk291) ? apk291 : (fs.existsSync(apk290) ? apk290 : (fs.existsSync(apk280) ? apk280 : apkBase)));
   const targetFilename = req.params.version
     ? `einsdream-mobile-v${req.params.version}.apk`
-    : 'einsdream-mobile-v2.9.1.apk';
+    : 'einsdream-mobile-v2.9.2.apk';
   res.download(fileToServe, targetFilename, (err) => {
     if (err && !res.headersSent) {
-      res.redirect('/public/einsdream-mobile-v2.9.1.apk');
+      res.redirect('/public/einsdream-mobile-v2.9.2.apk');
     }
   });
 });
@@ -140,22 +141,20 @@ app.get(['/download/apk', '/download/apk/:version'], (req, res) => {
 app.get('/api/app-version', (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.json({
-    version: '2.9.1',
-    versionCode: 15,
+    version: '2.9.2',
+    versionCode: 16,
     apkUrl: '/download/apk',
-    apkFilename: 'einsdream-mobile-v2.9.1.apk',
+    apkFilename: 'einsdream-mobile-v2.9.2.apk',
     releaseDate: '2026-09-21',
-    architecture: 'EinsDream 3.0 (Local Audio + EinsDream Pair Dual)',
+    architecture: 'EinsDream 3.0 (Local Audio + Senior-Friendly UI)',
     changelog: [
+      'v2.9.2: Solución definitiva al error de audio con formato nativo PCM 16-bit 16000 Hz',
+      'v2.9.2: Restauración de los 20-25 eventos acústicos realistas en todas las noches',
+      'v2.9.2: Rediseño total de la pestaña Audios Nocturnos para Adultos Mayores (selector de días y reproductor gigante)',
       'v2.9.1: Corrección completa de reproducción de audio sin bloqueos de telemetría',
       'v2.9.1: Identificación precisa de tipos de eventos (Ronquidos, Tos, Respiración)',
       'v2.9.1: Mapeo y nomenclatura exacta para los 4 días consecutivos del historial',
-      'v2.9.0: EinsDream Pair – Monitoreo Acústico Dual con 2 celulares (Topología Master/Slave)',
-      'v2.9.0: Triangulación Acústica TDOA y Delta dB para aislar ronquidos del usuario vs acompañante',
-      'v2.9.0: Sincronización fina de reloj (NTP RTT) y calibración acústica con pulso de 100ms',
-      'v2.9.0: Emparejamiento amigable para adultos con PIN de 4 dígitos gigante o QR',
-      'v2.8.0: Fecha de sesión en hora local (no UTC) – fix para Chile y zonas UTC-X',
-      'EinsDream 3.0: Arquitectura de Audio 100% Local (CERO bytes de audio en la nube)'
+      'v2.9.0: EinsDream Pair – Monitoreo Acústico Dual con 2 celulares (Topología Master/Slave)'
     ]
   });
 });
