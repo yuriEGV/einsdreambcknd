@@ -10,7 +10,7 @@ on:
 
 jobs:
   build-apk:
-    name: Build Einsdream APK v2.8.0
+    name: Build Einsdream APK v2.9.0
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -41,7 +41,7 @@ jobs:
         run: |
           npm install
 
-      - name: Bundle Official Expo Hermes Bytecode v2.8.0
+      - name: Bundle Official Expo Hermes Bytecode v2.9.0
         working-directory: mobile-app
         run: |
           mkdir -p ../public/assets
@@ -108,15 +108,15 @@ jobs:
           # Clean up any older versioned APKs so repo stays well under Vercel 250MB limit
           rm -f public/einsdream-mobile-v*.apk
           # Copy versioned copy
-          cp public/einsdream-mobile.apk public/einsdream-mobile-v2.8.0.apk
+          cp public/einsdream-mobile.apk public/einsdream-mobile-v2.9.0.apk
           git add -A public/
           # Always commit (--allow-empty handles case where binary is identical)
-          git commit --allow-empty -m "chore(apk): update einsdream-mobile.apk Hermes bytecode v2.8.0 [skip actions]"
+          git commit --allow-empty -m "chore(apk): update einsdream-mobile.apk Hermes bytecode v2.9.0 [skip actions]"
           git push origin main
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: einsdream-mobile-v2.8.0
+          name: einsdream-mobile-v2.9.0
           path: public/einsdream-mobile.apk
           retention-days: 30

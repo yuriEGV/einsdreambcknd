@@ -8,8 +8,10 @@ import * as authController from '../controllers/authController.js';
 import * as uploadController from '../controllers/uploadController.js';
 import * as adminController from '../controllers/adminController.js';
 import * as nightSessionController from '../controllers/nightSessionController.js';
+import * as pairController from '../controllers/pairController.js';
 import authMiddleware from '../middleware/authMiddleware.js';
 import adminMiddleware from '../middleware/adminMiddleware.js';
+import jwt from 'jsonwebtoken';
 
 const router = express.Router();
 
@@ -104,5 +106,36 @@ router.put('/admin/users/:id', authMiddleware, adminMiddleware, adminController.
 router.get('/admin/logs', authMiddleware, adminMiddleware, adminController.getLoginLogs);
 router.get('/admin/sessions', authMiddleware, adminMiddleware, adminController.getAudioSessions);
 router.delete('/admin/sessions/:id', authMiddleware, adminMiddleware, adminController.deleteAudioSession);
+
+// ==================== OPTIONAL AUTH MIDDLEWARE ====================
+const optionalAuth = (req, res, next) => {
+    const authHeader = req.headers.authorization;
+    let token = null;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        token = authHeader.split(' ')[1];
+    } else if (authHeader) {
+        token = authHeader;
+    }
+    if (token) {
+        try {
+            const JWT_SECRET = process.env.JWT_SECRET || 'einsdream_super_secret_jwt_key_2026';
+            req.user = jwt.verify(token, JWT_SECRET);
+        } catch (e) {
+            req.user = { userId: `anon_${Date.now()}` };
+        }
+    } else {
+        req.user = { userId: `anon_${Date.now()}` };
+    }
+    next();
+};
+
+// ==================== DUAL PHONE / EINSDREAM PAIR ENDPOINTS ====================
+router.post('/pair/create', optionalAuth, pairController.createRoom);
+router.post('/pair/join', optionalAuth, pairController.joinRoom);
+router.get('/pair/status/:roomId', optionalAuth, pairController.getRoomStatus);
+router.post('/pair/sync-clock', optionalAuth, pairController.syncClock);
+router.post('/pair/start', optionalAuth, pairController.startNight);
+router.post('/pair/events', optionalAuth, pairController.pushEvents);
+router.post('/pair/reconcile', optionalAuth, pairController.reconcileRoom);
 
 export default router;

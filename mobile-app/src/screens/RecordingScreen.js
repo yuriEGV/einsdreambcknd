@@ -1,16 +1,19 @@
 /**
- * RecordingScreen.js - EinsDream 2026 v2.8.0
+ * RecordingScreen.js - EinsDream 2026 v2.9.0
  *
- * Sistema Inteligente de Monitoreo Nocturno, Motor Einsdream Score y Análisis Predictivo
+ * Sistema Inteligente de Monitoreo Nocturno, EinsDream Pair (Dual Celulares) y Motor Einsdream Score
  *
  * PESTAÑAS Y FUNCIONALIDADES:
- * 1. 🌙 Monitoreo:
+ * 1. 🌙 Monitoreo & EinsDream Pair:
+ *    - Monitoreo individual o en pareja (2 celulares sincronizados).
+ *    - Triangulación acústica (TDOA + Delta dB) para aislar ronquidos del usuario vs acompañante.
  *    - Escucha silenciosa con VAD y medidor de decibelios en vivo.
- *    - IA Acústica On-Device (clasificación $0 de ronquido, tos, respiración, voz, movimiento).
+ *    - IA Acústica On-Device (clasificación de ronquido, tos, respiración, voz, movimiento).
  *    - Prueba rápida de 5 segundos con auto-reproducción inmediata.
  *    - Memoria protegida de 500 MB con política FIFO.
  * 2. 📊 Einsdream Score & Dimensiones:
  *    - Score Global (0 - 100) sustentado en 3 Pilares con prioridad a la Regularidad (40%).
+ *    - Desglose de Impacto del Acompañante (correlación cruzada de microdespertares).
  *    - Diales circulares (Duración con déficit, Sueño profundo %, Regularidad, Eficiencia %, Paz acústica).
  *    - Balance unificado de 7 Dimensiones del Descanso.
  *    - Hypnogram multi-fase (Awake, REM, Light, Deep) con barras y duraciones exactas.
@@ -53,6 +56,8 @@ import {
     ThreePillarsCard
 } from '../components/SleepCharts';
 import SleepTestModal from '../components/SleepTestModal';
+import PairModal from '../components/PairModal';
+import PartnerImpactCard from '../components/PartnerImpactCard';
 import {
     evaluateEinsdreamScore,
     calculateTrendsBenchmark,
@@ -60,6 +65,10 @@ import {
 } from '../services/predictiveEngine';
 import { readNightHealthMetrics } from '../services/healthConnect';
 import { processNightEngineCorrelation } from '../services/nightEngine';
+import {
+    reconcilePairSession,
+    pushPairEvents
+} from '../services/einsdreamPairService';
 
 const { API_URL, BASE_URL } = CONFIG;
 const FULL_BASE_URL = BASE_URL || 'https://einsdreambcknd.vercel.app';
@@ -258,6 +267,13 @@ export default function RecordingScreen({ token, onLogout }) {
 
     // Pausa de Privacidad
     const [isRecordingPaused, setIsRecordingPaused] = useState(false);
+
+    // ─── Estado EinsDream Pair (Monitoreo Dual con Dos Celulares) ─────────────
+    const [pairModalVisible, setPairModalVisible] = useState(false);
+    const [pairConfig, setPairConfig] = useState(null); // null | { isPair, roomId, roomCode, role, partnerRole, clockOffsetMs }
+    const [pairSessionResult, setPairSessionResult] = useState(null);
+    const pairConfigRef = useRef(null);
+    const pairEventsBufferRef = useRef([]);
 
     // ─── Estado del Motor Einsdream & Predicción ──────────────────────────────
     const [sleepProfile, setSleepProfile] = useState({
@@ -799,7 +815,10 @@ export default function RecordingScreen({ token, onLogout }) {
                                     coughCount
                                 },
                                 soundEvents: rec.soundEvents || [],
-                                pauseIntervals: rec.pauseSegments || []
+                                pauseIntervals: rec.pauseSegments || [],
+                                pairData: rec.pairData || null,
+                                isDualSession: !!rec.isDualSession,
+                                pairRole: rec.pairRole || 'left'
                             };
                             cachedSessions.unshift(sessionEntry);
                             cacheChanged = true;
@@ -1042,13 +1061,29 @@ export default function RecordingScreen({ token, onLogout }) {
         ]);
     };
 
-    // ─── MONITOREO INTELIGENTE ────────────────────────────────────────────────
+    // ─── MONITOREO INTELIGENTE (SOLO O PAREJA) ────────────────────────────────
     const toggleSmartMonitoring = async () => {
         if (monitorActiveRef.current) {
             await stopSmartMonitoring();
         } else {
-            await startSmartMonitoring();
+            setPairModalVisible(true);
         }
+    };
+
+    const handleStartSoloMonitoring = async () => {
+        setPairConfig(null);
+        pairConfigRef.current = null;
+        setPairSessionResult(null);
+        pairEventsBufferRef.current = [];
+        await startSmartMonitoring();
+    };
+
+    const handleStartPairMonitoring = async (config) => {
+        setPairConfig(config);
+        pairConfigRef.current = config;
+        setPairSessionResult(null);
+        pairEventsBufferRef.current = [];
+        await startSmartMonitoring();
     };
 
     const startSmartMonitoring = async () => {
@@ -1150,7 +1185,32 @@ export default function RecordingScreen({ token, onLogout }) {
                         await FileSystem.copyAsync({ from: tempUri, to: destUri });
                     }
 
-                    const nightLabel = `🌙 Noche del ${start.toLocaleDateString('es-CL', { weekday: 'long', day: 'numeric', month: 'short' })}`;
+                    // ── 1.2 Reconciliación Dual si se monitoreó en Pareja (EinsDream Pair) ───
+                    let pairReconcileData = null;
+                    if (pairConfigRef.current?.isPair) {
+                        try {
+                            const cfg = pairConfigRef.current;
+                            const pairRes = await reconcilePairSession({
+                                roomId: cfg.roomId,
+                                eventsHost: cfg.role === 'left' ? capturedEvents : [],
+                                eventsGuest: cfg.role === 'right' ? capturedEvents : [],
+                                clockOffsetMs: cfg.clockOffsetMs || 0
+                            });
+                            if (pairRes && pairRes.success) {
+                                pairReconcileData = pairRes;
+                                setPairSessionResult(pairRes);
+                            }
+                        } catch (errPair) {
+                            console.warn('[stopSmartMonitoring pair reconcile]', errPair.message);
+                        }
+                    }
+
+                    const isPairSession = !!pairConfigRef.current?.isPair;
+                    const sessionRole = pairConfigRef.current?.role || 'left';
+                    const nightLabel = isPairSession
+                        ? `👥 Noche en Pareja (${sessionRole === 'left' ? 'Lado Izq' : 'Lado Der'}) - ${start.toLocaleDateString('es-CL', { weekday: 'short', day: 'numeric', month: 'short' })}`
+                        : `🌙 Noche del ${start.toLocaleDateString('es-CL', { weekday: 'long', day: 'numeric', month: 'short' })}`;
+                    
                     const metaIndex = await loadMetadataIndex();
                     metaIndex[filename] = {
                         filename,
@@ -1167,6 +1227,9 @@ export default function RecordingScreen({ token, onLogout }) {
                         intensityDb: 55,
                         timestamp: startTimeMs,
                         isNightSession: true,
+                        isDualSession: isPairSession,
+                        pairRole: sessionRole,
+                        pairData: pairReconcileData
                     };
                     await saveMetadataIndex(metaIndex);
                 }
@@ -1211,6 +1274,12 @@ export default function RecordingScreen({ token, onLogout }) {
             correlated.sessionDate   = sessionDateStr;
             correlated.pauseSegments = capturedPauseSegments;
 
+            if (pairSessionResult) {
+                correlated.pairData = pairSessionResult;
+                correlated.isDualSession = true;
+                correlated.pairRole = pairConfigRef.current?.role || 'left';
+            }
+
             setNightAnalysis(correlated);
             await saveSessionToCache(correlated);
             await reloadTrendsAndPredictions(sleepProfile);
@@ -1224,13 +1293,23 @@ export default function RecordingScreen({ token, onLogout }) {
 
             setActiveTab('score');
 
+            const isPairActive = !!pairConfigRef.current?.isPair;
+            const currentRole = pairConfigRef.current?.role || 'left';
+            const partnerSnores = pairSessionResult?.summary 
+                ? (currentRole === 'left' ? pairSessionResult.summary.guestSnores : pairSessionResult.summary.hostSnores)
+                : 0;
+            const mySnores = pairSessionResult?.summary
+                ? (currentRole === 'left' ? pairSessionResult.summary.hostSnores : pairSessionResult.summary.guestSnores)
+                : capturedEvents.filter(e => e.type === 'snore').length;
+
             Alert.alert(
-                '🌙 Noche Registrada',
+                isPairActive ? '👥 Noche en Pareja Registrada' : '🌙 Noche Registrada',
                 `Duración: ${Math.floor(elapsedMinutes / 60)}h ${elapsedMinutes % 60}m\n` +
                 `Score: ${correlated.einsdreamScore.totalScore}/100\n\n` +
-                `• Eventos detectados: ${capturedEvents.length}\n` +
-                `• Calidad acústica: ${correlated.einsdreamScore.qualityScore}%\n\n` +
-                `Audio nocturno guardado. Ve a la pestaña Audios para ver la línea de tiempo.`
+                (isPairActive 
+                    ? `• Tus ronquidos aislados: ${mySnores}\n• Ronquidos de tu pareja: ${partnerSnores}\n• Ruido ambiente filtrado: ${pairSessionResult?.summary?.ambientEvents || 0}\n\n`
+                    : `• Eventos detectados: ${capturedEvents.length}\n• Calidad acústica: ${correlated.einsdreamScore.qualityScore}%\n\n`) +
+                `Audio nocturno guardado. Ve a la pestaña Score para revisar el balance completo.`
             );
         });
     };
@@ -1327,6 +1406,21 @@ export default function RecordingScreen({ token, onLogout }) {
         };
 
         nightEventsRef.current.push(eventMarker);
+
+        if (pairConfigRef.current?.isPair) {
+            pairEventsBufferRef.current.push({
+                t_start: now,
+                duration_ms: eventType === 'cough' ? 2000 : 4000,
+                peak_db: currentDbVal,
+                type: eventType,
+                label
+            });
+            if (pairEventsBufferRef.current.length >= 4) {
+                const batch = [...pairEventsBufferRef.current];
+                pairEventsBufferRef.current = [];
+                pushPairEvents(pairConfigRef.current.roomId, pairConfigRef.current.role, batch).catch(() => {});
+            }
+        }
 
         setNightStats((prev) => ({
             ...prev,
@@ -1639,7 +1733,7 @@ El sistema web ya puede procesar tus estadísticas.`
             <View style={s.topHeader}>
                 <Text style={s.mainAppTitle}>EinsDream</Text>
                 <View style={s.versionBadge}>
-                    <Text style={s.versionText}>v2.7.0 (Estable)</Text>
+                    <Text style={s.versionText}>v2.9.0 (EinsDream Pair)</Text>
                 </View>
             </View>
 
@@ -1740,6 +1834,14 @@ El sistema web ya puede procesar tus estadísticas.`
                                 <Text style={s.statBadge}>🤧 Tos: {nightStats.cough}</Text>
                                 <Text style={s.statBadge}>🗣️ Voz: {nightStats.voice}</Text>
                             </View>
+
+                            {pairConfig?.isPair && (
+                                <View style={s.pairMonitoringBadge}>
+                                    <Text style={s.pairMonitoringTxt}>
+                                        👥 Modo Pareja Activo · {pairConfig.role === 'left' ? '🛏️ Lado Izquierdo' : '🛏️ Lado Derecho'} · Código: {pairConfig.roomCode}
+                                    </Text>
+                                </View>
+                            )}
                         </View>
                     )}
 
@@ -1770,6 +1872,25 @@ El sistema web ya puede procesar tus estadísticas.`
                                 : 'Escucha continua · Detecta ronquidos, tos y respiración'}
                         </Text>
                     </TouchableOpacity>
+
+                    {/* Botón de Acceso Rápido a Monitoreo en Pareja */}
+                    {!isMonitoring && (
+                        <TouchableOpacity
+                            style={s.pairShortcutBtn}
+                            onPress={() => setPairModalVisible(true)}
+                        >
+                            <Text style={s.pairShortcutIcon}>👥</Text>
+                            <View style={{ flex: 1 }}>
+                                <Text style={s.pairShortcutTitle}>EinsDream Pair (2 Celulares)</Text>
+                                <Text style={s.pairShortcutSub}>
+                                    {pairConfig?.isPair
+                                        ? `Configurado: ${pairConfig.role === 'left' ? 'Lado Izquierdo' : 'Lado Derecho'} (Sala ${pairConfig.roomCode})`
+                                        : 'Sincroniza dos teléfonos para separar y aislar ronquidos'}
+                                </Text>
+                            </View>
+                            <Text style={s.pairShortcutArrow}>→</Text>
+                        </TouchableOpacity>
+                    )}
 
                     {/* Botón de Pausa de Privacidad — solo visible durante monitoreo activo */}
                     {isMonitoring && (
@@ -1845,6 +1966,14 @@ El sistema web ya puede procesar tus estadísticas.`
 
                             {/* Tarjeta de los 3 Pilares con Einsdream Score */}
                             <ThreePillarsCard scoreData={nightAnalysis.einsdreamScore} />
+
+                            {/* Tarjeta de Impacto del Acompañante (Monitoreo Dual con 2 Celulares) */}
+                            {(nightAnalysis.pairData || pairSessionResult) && (
+                                <PartnerImpactCard
+                                    pairData={nightAnalysis.pairData || pairSessionResult}
+                                    myRole={nightAnalysis.pairRole || pairConfig?.role || 'left'}
+                                />
+                            )}
 
                             {/* Diales Circulares (Duración con Déficit, Sueño Profundo, Regularidad, Eficiencia) */}
                             <Text style={s.sectionHeader}>⏱️ Diales de Eficiencia y Salud</Text>
@@ -2359,6 +2488,14 @@ El sistema web ya puede procesar tus estadísticas.`
                 initialProfile={sleepProfile}
             />
 
+            {/* Modal de Emparejamiento Dual (EinsDream Pair) */}
+            <PairModal
+                visible={pairModalVisible}
+                onClose={() => setPairModalVisible(false)}
+                onSelectSolo={handleStartSoloMonitoring}
+                onStartPairMonitoring={handleStartPairMonitoring}
+            />
+
             {/* Pie con botón de cerrar sesión */}
             <View style={s.footer}>
                 <Button title="Cerrar sesión" onPress={onLogout} color="#64748b" />
@@ -2567,6 +2704,52 @@ const s = StyleSheet.create({
         color: '#fbbf24',
         fontWeight: '800',
         fontSize: 13,
+    },
+
+    pairShortcutBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#131b38',
+        borderWidth: 1.5,
+        borderColor: '#4f46e5',
+        borderRadius: 14,
+        paddingVertical: 13,
+        paddingHorizontal: 16,
+        marginBottom: 14,
+        gap: 12,
+    },
+    pairShortcutIcon: {
+        fontSize: 24,
+    },
+    pairShortcutTitle: {
+        color: '#ffffff',
+        fontWeight: '800',
+        fontSize: 14,
+    },
+    pairShortcutSub: {
+        color: '#94a3b8',
+        fontSize: 11,
+        marginTop: 2,
+    },
+    pairShortcutArrow: {
+        color: '#818cf8',
+        fontSize: 18,
+        fontWeight: '800',
+    },
+    pairMonitoringBadge: {
+        backgroundColor: 'rgba(79, 70, 229, 0.25)',
+        borderWidth: 1,
+        borderColor: '#6366f1',
+        borderRadius: 10,
+        paddingVertical: 6,
+        paddingHorizontal: 10,
+        marginTop: 8,
+        alignItems: 'center',
+    },
+    pairMonitoringTxt: {
+        color: '#e0e7ff',
+        fontSize: 11,
+        fontWeight: '700',
     },
 
     pausePrivacyBtn: {
