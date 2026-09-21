@@ -92,6 +92,10 @@ router.get('/sleep-test', authMiddleware, nightSessionController.getSleepTest);
 router.get('/sessions/:id/audio', authMiddleware, uploadController.getAudioById);
 router.get('/sessions/:id/stream', authMiddleware, uploadController.streamAudioSession);
 
+// Session deletion (App & User)
+router.delete('/sessions/:id', authMiddleware, uploadController.deleteSession);
+router.delete('/night-sessions/:id', authMiddleware, nightSessionController.deleteNightSession);
+
 // Event comments & annotations
 router.post('/sessions/:id/comments', authMiddleware, uploadController.addSessionComment);
 

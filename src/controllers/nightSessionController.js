@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import NightSession from '../models/NightSession.js';
 import AudioSession from '../models/AudioSession.js';
 import SleepProfile from '../models/SleepProfile.js';
@@ -469,5 +470,25 @@ export const getLatestAnalysis = async (req, res) => {
             message: 'Error al obtener el análisis más reciente',
             error: error.message
         });
+    }
+};
+
+/**
+ * Delete Night Session (Supports owner or admin)
+ */
+export const deleteNightSession = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const query = mongoose.Types.ObjectId.isValid(id) ? { _id: id } : { sessionId: id };
+        if (req.user.role !== 'admin') {
+            query.userId = req.user.userId;
+        }
+        const deleted = await NightSession.findOneAndDelete(query);
+        if (!deleted) {
+            return res.status(404).json({ message: 'Sesión nocturna no encontrada' });
+        }
+        res.json({ success: true, message: 'Sesión nocturna eliminada correctamente' });
+    } catch (error) {
+        res.status(500).json({ message: 'Error al eliminar sesión nocturna', error: error.message });
     }
 };

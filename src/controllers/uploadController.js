@@ -688,3 +688,26 @@ export const getDiagnosticsStatus = async (req, res) => {
         res.status(500).json({ message: 'Error getting diagnostics', error: error.message });
     }
 };
+
+/**
+ * Delete Audio Session (Supports owner or admin)
+ */
+export const deleteSession = async (req, res) => {
+    try {
+        const { id } = req.params;
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(404).json({ message: 'Session not found' });
+        }
+        const query = { _id: id };
+        if (req.user.role !== 'admin') {
+            query.userId = req.user.userId;
+        }
+        const deleted = await AudioSession.findOneAndDelete(query);
+        if (!deleted) {
+            return res.status(404).json({ message: 'Session not found' });
+        }
+        res.json({ success: true, message: 'Session deleted successfully' });
+    } catch (error) {
+        res.status(500).json({ message: 'Error deleting session', error: error.message });
+    }
+};
