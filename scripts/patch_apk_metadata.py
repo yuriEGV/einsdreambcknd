@@ -74,7 +74,7 @@ with zipfile.ZipFile(apk_path, 'w', allowZip64=True) as z_out:
 # Verify
 with zipfile.ZipFile(apk_path, 'r') as z_check:
     m = z_check.read('AndroidManifest.xml')
-    assert u291 in m, "Verification failed: 2.9.1 not found in AndroidManifest.xml!"
+    assert u292 in m, "Verification failed: 2.9.2 not found in AndroidManifest.xml!"
     assert 'META-INF/services/kotlinx.coroutines.internal.MainDispatcherFactory' in z_check.namelist(), "MainDispatcherFactory missing!"
 
 print(f"Metadata patch complete and verified for {apk_path}")
