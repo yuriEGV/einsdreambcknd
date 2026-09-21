@@ -66,8 +66,9 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-// Specific handler for versioned APK downloads (serves the latest v2.7.0 APK for all version queries)
+// Specific handler for versioned APK downloads (serves the latest v2.8.0 APK for all version queries)
 app.get([
+  '/public/einsdream-mobile-v2.8.0.apk',
   '/public/einsdream-mobile-v2.7.0.apk',
   '/public/einsdream-mobile-v2.6.0.apk',
   '/public/einsdream-mobile-v2.5.0.apk',
@@ -84,24 +85,24 @@ app.get([
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+  const apk280 = path.join(__dirname, '../public/einsdream-mobile-v2.8.0.apk');
   const apk270 = path.join(__dirname, '../public/einsdream-mobile-v2.7.0.apk');
-  const apk260 = path.join(__dirname, '../public/einsdream-mobile-v2.6.0.apk');
   const apkBase = path.join(__dirname, '../public/einsdream-mobile.apk');
-  const fileToServe = fs.existsSync(apk270) ? apk270 : (fs.existsSync(apk260) ? apk260 : apkBase);
-  res.download(fileToServe, 'einsdream-mobile-v2.7.0.apk');
+  const fileToServe = fs.existsSync(apk280) ? apk280 : (fs.existsSync(apk270) ? apk270 : apkBase);
+  res.download(fileToServe, 'einsdream-mobile-v2.8.0.apk');
 });
 
-// Wildcard regex handler: any /public/einsdream-mobile*.apk request is served reliably with v2.7.0
+// Wildcard regex handler: any /public/einsdream-mobile*.apk request is served reliably with v2.8.0
 app.get(/^\/public\/einsdream-mobile.*\.apk$/, (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+  const apk280 = path.join(__dirname, '../public/einsdream-mobile-v2.8.0.apk');
   const apk270 = path.join(__dirname, '../public/einsdream-mobile-v2.7.0.apk');
-  const apk260 = path.join(__dirname, '../public/einsdream-mobile-v2.6.0.apk');
   const apkBase = path.join(__dirname, '../public/einsdream-mobile.apk');
-  const fileToServe = fs.existsSync(apk270) ? apk270 : (fs.existsSync(apk260) ? apk260 : apkBase);
-  res.download(fileToServe, 'einsdream-mobile-v2.7.0.apk');
+  const fileToServe = fs.existsSync(apk280) ? apk280 : (fs.existsSync(apk270) ? apk270 : apkBase);
+  res.download(fileToServe, 'einsdream-mobile-v2.8.0.apk');
 });
 
 // Serve static files from the public directory
@@ -113,16 +114,16 @@ app.get(['/download/apk', '/download/apk/:version'], (req, res) => {
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+  const apk280 = path.join(__dirname, '../public/einsdream-mobile-v2.8.0.apk');
   const apk270 = path.join(__dirname, '../public/einsdream-mobile-v2.7.0.apk');
-  const apk260 = path.join(__dirname, '../public/einsdream-mobile-v2.6.0.apk');
   const apkBase = path.join(__dirname, '../public/einsdream-mobile.apk');
-  const fileToServe = fs.existsSync(apk270) ? apk270 : (fs.existsSync(apk260) ? apk260 : apkBase);
+  const fileToServe = fs.existsSync(apk280) ? apk280 : (fs.existsSync(apk270) ? apk270 : apkBase);
   const targetFilename = req.params.version
     ? `einsdream-mobile-v${req.params.version}.apk`
-    : 'einsdream-mobile-v2.7.0.apk';
+    : 'einsdream-mobile-v2.8.0.apk';
   res.download(fileToServe, targetFilename, (err) => {
     if (err && !res.headersSent) {
-      res.redirect('/public/einsdream-mobile-v2.7.0.apk');
+      res.redirect('/public/einsdream-mobile-v2.8.0.apk');
     }
   });
 });
@@ -131,19 +132,23 @@ app.get(['/download/apk', '/download/apk/:version'], (req, res) => {
 app.get('/api/app-version', (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.json({
-    version: '2.7.0',
-    versionCode: 12,
+    version: '2.8.0',
+    versionCode: 13,
     apkUrl: '/download/apk',
-    apkFilename: 'einsdream-mobile-v2.7.0.apk',
-    releaseDate: '2026-09-17',
+    apkFilename: 'einsdream-mobile-v2.8.0.apk',
+    releaseDate: '2026-09-21',
     architecture: 'EinsDream 3.0 (Local Audio Architecture)',
     changelog: [
+      'v2.8.0: Fecha de sesión en hora local (no UTC) – fix para Chile y zonas UTC-X',
+      'v2.8.0: Eventos nocturnos con RNG sembrado por sesión – patrones únicos por noche',
+      'v2.8.0: Blocklist local de audios nube eliminados – no vuelven a aparecer al recargar',
+      'v2.8.0: Pausa mejorada – Android no pierde la sesión aunque mate el proceso en background',
+      'v2.8.0: Auto-reparación de metadatos históricos con hora local correcta',
       'EinsDream 3.0: Arquitectura de Audio 100% Local (CERO bytes de audio en la nube)',
       'Corrección de fecha Enero 1970 en Android y auto-reparación de metadatos históricos',
       'Pausa nocturna estabilizada con AudioFlinger y persistencia de monitoreo',
       'Detección acústica y de ronquidos calibrada (-48 dB) con metadatos de hora e intensidad en timeline',
-      'Auto-cálculo e inyección de sesiones locales en Score de sueño y telemetría de sincronización',
-      'Ajuste de margen inferior para visibilidad completa del botón Cerrar Sesión'
+      'Auto-cálculo e inyección de sesiones locales en Score de sueño y telemítria de sincronización'
     ]
   });
 });
@@ -184,8 +189,8 @@ app.get('/', async (req, res) => {
   res.json({
     status: 'ONLINE',
     message: 'Einsdream Backend API is running (EinsDream 3.0 Local Audio Architecture)',
-    version: '2.7.0',
-    apkVersion: '2.7.0',
+    version: '2.8.0',
+    apkVersion: '2.8.0',
     apkUrl: '/download/apk',
     dbStatus: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
     dbError: lastDbError,

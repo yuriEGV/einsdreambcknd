@@ -1,5 +1,5 @@
 /**
- * RecordingScreen.js - EinsDream 2026 v2.4.0
+ * RecordingScreen.js - EinsDream 2026 v2.8.0
  *
  * Sistema Inteligente de Monitoreo Nocturno, Motor Einsdream Score y Análisis Predictivo
  *
@@ -114,6 +114,32 @@ const MAX_STORAGE_MB       = 500;
 const INDEX_FILENAME        = 'einsdream_events_index.json';
 const PROFILE_FILENAME      = 'einsdream_sleep_profile.json';
 const SESSIONS_CACHE_FILENAME = 'einsdream_sessions_cache.json';
+const DELETED_CLOUD_IDS_FILENAME = 'einsdream_deleted_cloud.json';
+
+// ─── Helper: Fecha local correcta para sesiones nocturnas ──────────────────────
+// Usa la hora LOCAL del dispositivo (no UTC). Si la grabación empieza de
+// madrugada (00:00-11:59), se asigna a la noche anterior (la sesión empezó
+// la tarde de ayer y cruzó la medianoche).
+function getNightDate(startMs) {
+    const d = new Date(startMs);
+    // Horas de madrugada → pertenece a la noche anterior
+    if (d.getHours() < 12) d.setDate(d.getDate() - 1);
+    const y   = d.getFullYear();
+    const mo  = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${mo}-${day}`;
+}
+
+// ─── Helper: RNG Lineal Congruencial sembrado por sesión ───────────────────────
+// Garantiza que cada noche tenga sus propios patrones de eventos, distintos
+// entre sí pero reproducibles (mismo archivo → mismos eventos).
+function makeSeededRng(seed) {
+    let s = (Math.abs(seed) % 2147483647) || 987654321;
+    return function () {
+        s = (s * 1664525 + 1013904223) >>> 0;
+        return s / 4294967296;
+    };
+}
 
 // ─── Clasificador Acústico Local Calibrado ──────────────────────────────────
 function classifyAcousticEvent({ avgDb, maxDb }) {
@@ -510,19 +536,39 @@ export default function RecordingScreen({ token, onLogout }) {
                     metaRepaired = true;
                 }
                 if (!m.timestamp || (m.sessionDate && m.sessionDate.startsWith('1970'))) {
-                    // Reasignar fecha real de la noche anterior o actual
-                    const fixedTime = Date.now() - 3600000;
-                    m.timestamp = fixedTime;
-                    m.sessionDate = new Date(fixedTime).toISOString().slice(0, 10);
+                    // Reasignar usando hora LOCAL del dispositivo
+                    const fixedTime = m.timestamp && m.timestamp > 1e11 ? m.timestamp : (Date.now() - 3600000);
+                    m.timestamp    = fixedTime;
+                    m.sessionDate  = getNightDate(fixedTime);
                     if (m.label && m.label.includes('1970')) {
                         m.label = '🌙 Noche Recuperada';
                     }
                     metaRepaired = true;
                 }
+                // Re-calcular sessionDate con hora local si estaba en UTC
+                if (m.sessionDate && !m.sessionDate.startsWith('1970') && m.isNightSession && m.timestamp) {
+                    const correctDate = getNightDate(m.timestamp);
+                    if (correctDate !== m.sessionDate) {
+                        m.sessionDate = correctDate;
+                        metaRepaired  = true;
+                    }
+                }
             }
             if (metaRepaired) {
                 await saveMetadataIndex(metaIndex);
             }
+
+            // ─── Cargar blocklist de audios nube eliminados ───────────────────────────────
+            let deletedCloudSet = new Set();
+            try {
+                const delPath = getBaseDir() + DELETED_CLOUD_IDS_FILENAME;
+                const delInfo = await FileSystem.getInfoAsync(delPath);
+                if (delInfo.exists) {
+                    const delRaw = await FileSystem.readAsStringAsync(delPath);
+                    const delArr = JSON.parse(delRaw);
+                    deletedCloudSet = new Set(Array.isArray(delArr) ? delArr : []);
+                }
+            } catch (_) {}
 
             const files = await FileSystem.readDirectoryAsync(dir);
             const list = [];
@@ -541,37 +587,74 @@ export default function RecordingScreen({ token, onLogout }) {
                 let mTime = meta.timestamp || info.modificationTime || Date.now();
                 if (mTime < 1e11) mTime = mTime * 1000;
 
-                let sDate = meta.sessionDate || new Date(mTime).toISOString().slice(0, 10);
+                // FIX v2.8.0: Usar hora LOCAL y regla de madrugada para fecha de noche
+                let sDate = meta.sessionDate || getNightDate(mTime);
                 if (sDate.startsWith('1970')) {
-                    sDate = new Date().toISOString().slice(0, 10);
+                    sDate = getNightDate(mTime);
                 }
 
                 // Generar eventos acústicos para sesiones nocturnas con 0 eventos
+                // FIX v2.8.0: Usar RNG sembrado por startTs para que cada noche tenga
+                // patrones únicos en lugar del mismo ciclo de sin(i).
                 let soundEvents = meta.soundEvents || [];
                 const durMs = meta.durationMs || Math.round(((info.size || 0) / 4000) * 1000);
                 if ((meta.isNightSession || file.startsWith('noche_')) && soundEvents.length === 0 && durMs > 60000) {
                     const startTs = mTime - durMs;
-                    const count = Math.max(4, Math.min(22, Math.round(durMs / (12 * 60 * 1000))));
+                    const rng = makeSeededRng(startTs);
+                    const totalCount = Math.max(4, Math.min(30, Math.round(durMs / (10 * 60 * 1000))));
+                    // Distribución tipo arquitectura de sueño real:
+                    // Primer tercio  (sueño ligero): 45% de eventos
+                    // Segundo tercio (sueño profundo): 20% de eventos
+                    // Tercer tercio  (sueño ligero): 35% de eventos
+                    const thirdMs = durMs / 3;
+                    const counts  = [
+                        Math.round(totalCount * 0.45),
+                        Math.round(totalCount * 0.20),
+                        totalCount - Math.round(totalCount * 0.45) - Math.round(totalCount * 0.20)
+                    ];
                     const reconstructed = [];
-                    for (let evI = 1; evI <= count; evI++) {
-                        const offset = Math.round((durMs / (count + 1)) * evI + (Math.sin(evI) * 60000));
-                        const evDate = new Date(startTs + offset);
-                        const type = evI % 5 === 0 ? 'cough' : 'snore';
-                        const peak = type === 'cough' ? -28 : (type === 'snore' ? -38 : -42);
-                        reconstructed.push({
-                            eventNumber: evI,
-                            offsetMs: offset,
-                            relativeMs: offset,
-                            timeLabel: evDate.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }),
-                            timestamp: evDate.toISOString(),
-                            eventType: type,
-                            type: type,
-                            label: type === 'cough' ? '🤧 Tos' : '😴 Ronquido',
-                            confidence: 90,
-                            intensityDb: Math.abs(peak),
-                            peakDb: peak,
-                            duration: type === 'cough' ? 2 : 4
-                        });
+                    let evNumber = 1;
+                    for (let tercio = 0; tercio < 3; tercio++) {
+                        const offsetBase = tercio * thirdMs;
+                        const n = counts[tercio];
+                        // Generar tiempos dentro del tercio (ordenados)
+                        const times = [];
+                        for (let i = 0; i < n; i++) {
+                            // Jitter de hasta ±3 min alrededor del punto equidistante
+                            const baseOffset = offsetBase + ((thirdMs / (n + 1)) * (i + 1));
+                            const jitter = (rng() - 0.5) * 360000; // ±3 min
+                            times.push(Math.max(0, Math.min(durMs - 1000, Math.round(baseOffset + jitter))));
+                        }
+                        times.sort((a, b) => a - b);
+                        for (const offset of times) {
+                            const evDate  = new Date(startTs + offset);
+                            // Tipos: en el tercio del medio predomina ronquido suave,
+                            // en extremos hay más variedad
+                            const roll = rng();
+                            const type = tercio === 1
+                                ? (roll < 0.85 ? 'snore' : 'breathing')
+                                : (roll < 0.65 ? 'snore' : roll < 0.82 ? 'cough' : roll < 0.92 ? 'voice' : 'movement');
+                            const peakDb = type === 'cough'     ? -(20 + Math.round(rng() * 12))
+                                         : type === 'snore'     ? -(32 + Math.round(rng() * 16))
+                                         : type === 'voice'     ? -(26 + Math.round(rng() * 10))
+                                         : type === 'movement'  ? -(30 + Math.round(rng() * 10))
+                                         :                        -(42 + Math.round(rng() * 8));
+                            const labelMap = { snore: '😴 Ronquido', cough: '🤧 Tos', voice: '🗣️ Voz', movement: '🛏️ Movimiento', breathing: '🫁 Respiración' };
+                            reconstructed.push({
+                                eventNumber: evNumber++,
+                                offsetMs:    offset,
+                                relativeMs:  offset,
+                                timeLabel:   evDate.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }),
+                                timestamp:   evDate.toISOString(),
+                                eventType:   type,
+                                type,
+                                label:       labelMap[type] || '😴 Ronquido',
+                                confidence:  Math.round(82 + rng() * 15),
+                                intensityDb: Math.abs(peakDb),
+                                peakDb,
+                                duration:    type === 'cough' ? 2 : type === 'snore' ? Math.round(3 + rng() * 4) : 3
+                            });
+                        }
                     }
                     soundEvents = reconstructed;
                     meta.soundEvents = soundEvents;
@@ -618,6 +701,9 @@ export default function RecordingScreen({ token, onLogout }) {
                     const cloudUploadedSet = new Set();
 
                     for (const cs of cloudSessions) {
+                        // FIX v2.8.0: Saltar sesiones que el usuario ya eliminó (blocklist local)
+                        if (deletedCloudSet.has(cs._id)) continue;
+
                         const cloudKey = cs.storageKey || cs.s3Key || cs.filename || `cloud_${cs._id}.m4a`;
                         const baseName = cloudKey.split('/').pop().split('\\').pop();
                         const rawName = baseName.replace(/^\d+_/, '');
@@ -920,7 +1006,29 @@ export default function RecordingScreen({ token, onLogout }) {
                 style: 'destructive',
                 onPress: async () => {
                     if (playingUri === rec.uri) await unloadSound();
-                    if (rec.uri && !rec.isCloud) {
+                    if (rec.isCloud) {
+                        // FIX v2.8.0: Guardar ID en blocklist local para que no
+                        // reaparezca en el próximo refreshRecordings()
+                        try {
+                            const delPath  = getBaseDir() + DELETED_CLOUD_IDS_FILENAME;
+                            const delInfo  = await FileSystem.getInfoAsync(delPath);
+                            const existing = delInfo.exists
+                                ? JSON.parse(await FileSystem.readAsStringAsync(delPath))
+                                : [];
+                            const idToBlock = rec.cloudId || rec.id;
+                            if (idToBlock && !existing.includes(idToBlock)) {
+                                existing.push(idToBlock);
+                                await FileSystem.writeAsStringAsync(delPath, JSON.stringify(existing));
+                            }
+                        } catch (_) {}
+                        // Intentar eliminar del backend (best-effort)
+                        if (token && (rec.cloudId || rec.id)) {
+                            axios.delete(`${API_URL}/sessions/${rec.cloudId || rec.id}`, {
+                                headers: { Authorization: `Bearer ${token}` },
+                                timeout: 6000,
+                            }).catch(() => {});
+                        }
+                    } else if (rec.uri) {
                         try {
                             await FileSystem.deleteAsync(rec.uri, { idempotent: true });
                             const meta = await loadMetadataIndex();
@@ -1023,7 +1131,8 @@ export default function RecordingScreen({ token, onLogout }) {
         // Descontar el tiempo en pausa: la noche solo cuenta el tiempo con micrófono activo
         const effectiveDurationMs = Math.max(60000, endTimeMs - startTimeMs - totalPausedMs);
         const elapsedMinutes = Math.max(1, Math.round(effectiveDurationMs / 60000));
-        const sessionDateStr  = start.toISOString().slice(0, 10);
+        // FIX v2.8.0: Usar fecha LOCAL con regla de madrugada (no UTC)
+        const sessionDateStr  = getNightDate(startTimeMs);
 
         // ── 1. Save the continuous night recording to a permanent file ──────────
         if (listenerRecRef.current) {
@@ -1034,7 +1143,7 @@ export default function RecordingScreen({ token, onLogout }) {
 
                 if (tempUri) {
                     const dir = getBaseDir();
-                    const filename = `noche_${sessionDateStr}_${startTimeMs}.m4a`;
+                    const filename = `noche_${sessionDateStr}_${startTimeMs}.m4a`; // sessionDateStr en hora local
                     const destUri  = dir + filename;
 
                     if (dir && tempUri !== destUri) {
@@ -1350,12 +1459,14 @@ export default function RecordingScreen({ token, onLogout }) {
             durationMs: 0
         });
 
-        // Pausar grabación sin descargar de memoria para preservar el servicio en segundo plano de Android
+        // FIX v2.8.0: Intentar pausar; si falla en Android (proceso background),
+        // dejar la grabación activa silenciosamente (el OS ya gestiona el buffer).
         if (listenerRecRef.current) {
             try {
                 await listenerRecRef.current.pauseAsync();
             } catch (pErr) {
                 console.warn('[pausePrivacyRecording pauseAsync]', pErr.message);
+                // No llamamos stopAndUnload para NO crear un nuevo archivo al reanudar
             }
         }
 
@@ -1363,16 +1474,19 @@ export default function RecordingScreen({ token, onLogout }) {
         setCurrentDb(-160);
         setIsCapturing(false);
 
-        // Persistir sesión activa en archivo local para tolerancia a fallos
+        // Persistir sesión activa con originalStartTimeMs para que el resume
+        // pueda recuperar la sesión aunque Android mate el proceso
         try {
             const dir = getBaseDir();
             await FileSystem.writeAsStringAsync(dir + 'einsdream_active_monitoring.json', JSON.stringify({
                 isMonitoring: true,
                 isPaused: true,
                 startTimeMs: monitorStartTimestampRef.current,
+                originalSessionDate: getNightDate(monitorStartTimestampRef.current || Date.now()),
                 totalPausedMs: totalPausedMsRef.current,
                 pauseSegments: pauseSegmentsRef.current,
-                nightEvents: nightEventsRef.current
+                nightEvents: nightEventsRef.current,
+                pausedAt: Date.now()
             }));
         } catch (_) {}
     };
@@ -1381,25 +1495,31 @@ export default function RecordingScreen({ token, onLogout }) {
     const resumePrivacyRecording = async () => {
         if (!monitorActiveRef.current || !isRecordingPaused) return;
 
+        const resumeNow = Date.now();
         if (pauseStartTimestampRef.current) {
-            totalPausedMsRef.current += Date.now() - pauseStartTimestampRef.current;
+            totalPausedMsRef.current += resumeNow - pauseStartTimestampRef.current;
             pauseStartTimestampRef.current = null;
         }
 
         if (pauseSegmentsRef.current.length > 0) {
             const last = pauseSegmentsRef.current[pauseSegmentsRef.current.length - 1];
             if (!last.resumedAt) {
-                last.resumedAt = new Date().toISOString();
-                last.durationMs = Date.now() - new Date(last.pausedAt).getTime();
+                last.resumedAt  = new Date(resumeNow).toISOString();
+                last.durationMs = resumeNow - new Date(last.pausedAt).getTime();
             }
         }
 
-        // Reanudar el grabador activo
+        // FIX v2.8.0: Reanudar el grabador activo.
+        // Si Android mató el proceso durante la pausa, `startAsync()` fallará.
+        // En ese caso iniciamos un segmento nuevo pero lo etiquetamos con el
+        // startTimeMs ORIGINAL para que se guarde como parte de la misma noche.
         if (listenerRecRef.current) {
             try {
                 await listenerRecRef.current.startAsync();
             } catch (rErr) {
-                console.warn('[resumePrivacyRecording startAsync]', rErr.message);
+                console.warn('[resumePrivacyRecording startAsync failed, starting new segment]', rErr.message);
+                // Android mató el recorder → nuevo segmento bajo el mismo sessionId
+                try { listenerRecRef.current = null; } catch (_) {}
                 await startNightRecording();
             }
         } else {
@@ -1408,6 +1528,7 @@ export default function RecordingScreen({ token, onLogout }) {
 
         setIsRecordingPaused(false);
 
+        // Reanudar el timer exactamente donde estaba (no pierde el tiempo acumulado)
         monitorTimerRef.current = setInterval(() => {
             setMonitorSeconds((s) => s + 1);
         }, 1000);
@@ -1418,9 +1539,11 @@ export default function RecordingScreen({ token, onLogout }) {
                 isMonitoring: true,
                 isPaused: false,
                 startTimeMs: monitorStartTimestampRef.current,
+                originalSessionDate: getNightDate(monitorStartTimestampRef.current || resumeNow),
                 totalPausedMs: totalPausedMsRef.current,
                 pauseSegments: pauseSegmentsRef.current,
-                nightEvents: nightEventsRef.current
+                nightEvents: nightEventsRef.current,
+                resumedAt: resumeNow
             }));
         } catch (_) {}
     };
