@@ -68,8 +68,9 @@ app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 const getApkFileToServe = () => {
   const candidates = [
+    path.join(__dirname, '../public/einsdream-mobile-v2.9.6.apk'),
     path.join(__dirname, '../public/einsdream-mobile-v2.9.5.apk'),
-    path.join(__dirname, '../public/einsdream-mobile-v2.9.5.apk'),
+    path.join(__dirname, '../public/einsdream-mobile-v2.9.4.apk'),
     path.join(__dirname, '../public/einsdream-mobile-v2.9.3.apk'),
     path.join(__dirname, '../public/einsdream-mobile-v2.9.2.apk'),
     path.join(__dirname, '../public/einsdream-mobile-v2.9.1.apk'),
@@ -85,8 +86,9 @@ const getApkFileToServe = () => {
 
 // Specific handler for versioned APK downloads (serves the latest APK for all version queries)
 app.get([
+  '/public/einsdream-mobile-v2.9.6.apk',
   '/public/einsdream-mobile-v2.9.5.apk',
-  '/public/einsdream-mobile-v2.9.5.apk',
+  '/public/einsdream-mobile-v2.9.4.apk',
   '/public/einsdream-mobile-v2.9.3.apk',
   '/public/einsdream-mobile-v2.9.2.apk',
   '/public/einsdream-mobile-v2.9.1.apk',
@@ -109,7 +111,7 @@ app.get([
   res.setHeader('Expires', '0');
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
   const fileToServe = getApkFileToServe();
-  res.download(fileToServe, 'einsdream-mobile-v2.9.5.apk');
+  res.download(fileToServe, 'einsdream-mobile-v2.9.6.apk');
 });
 
 // Wildcard regex handler: any /public/einsdream-mobile*.apk request is served reliably
@@ -119,7 +121,7 @@ app.get(/^\/public\/einsdream-mobile.*\.apk$/, (req, res) => {
   res.setHeader('Expires', '0');
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
   const fileToServe = getApkFileToServe();
-  res.download(fileToServe, 'einsdream-mobile-v2.9.5.apk');
+  res.download(fileToServe, 'einsdream-mobile-v2.9.6.apk');
 });
 
 // Serve static files from the public directory
@@ -134,10 +136,10 @@ app.get(['/download/apk', '/download/apk/:version'], (req, res) => {
   const fileToServe = getApkFileToServe();
   const targetFilename = req.params.version
     ? `einsdream-mobile-v${req.params.version}.apk`
-    : 'einsdream-mobile-v2.9.5.apk';
+    : 'einsdream-mobile-v2.9.6.apk';
   res.download(fileToServe, targetFilename, (err) => {
     if (err && !res.headersSent) {
-      res.redirect('/public/einsdream-mobile-v2.9.5.apk');
+      res.redirect('/public/einsdream-mobile-v2.9.6.apk');
     }
   });
 });
@@ -146,20 +148,23 @@ app.get(['/download/apk', '/download/apk/:version'], (req, res) => {
 app.get('/api/app-version', (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.json({
-    version: "2.9.5",
-    versionCode: 19,
+    version: "2.9.6",
+    versionCode: 20,
     apkUrl: '/download/apk',
-    apkFilename: 'einsdream-mobile-v2.9.5.apk',
-    releaseDate: '2026-09-21',
-    architecture: 'EinsDream 3.0 (Continuous Audio + Peak Timeline + Senior UI)',
+    apkFilename: 'einsdream-mobile-v2.9.6.apk',
+    releaseDate: '2026-09-23',
+    architecture: 'EinsDream 3.0 (Continuous Audio + Acoustic Event Timeline + Senior UI)',
     changelog: [
+      'v2.9.6: Inicio de grabaciones exacto al pulsar el botón (sin depender de horas estimadas ni Sleep Test)',
+      'v2.9.6: Reemplazo integral de terminología acústica por eventos acústicos e intensidad máxima',
+      'v2.9.6: Visualización de inicio y fin real en el reproductor nocturno y la línea de tiempo',
       'v2.9.5: Corrección definitiva: eliminación de icono no importado y actualización de badge de versión',
       'v2.9.4: Corrección de estabilidad: resolución de variables y eliminación de excepciones en reproductor',
-      'v2.9.3: Restauración de Línea de Tiempo con puntos de picos acústicos interactivos',
-            'v2.9.3: Tarjeta inspectora de metadatos (hora, decibeles, certeza IA y navegación entre picos)',
-            'v2.9.3: Reproducción continua nocturna (de corrido) y viaje fluido con la barra de progreso',
-            'v2.9.3: Eliminación de audios aislados de 4 segundos e integración directa al reproductor',
-            'v2.9.2: Solución definitiva al error de audio con formato nativo PCM 16-bit 16000 Hz',
+      'v2.9.3: Restauración de Línea de Tiempo con puntos de eventos acústicos interactivos',
+      'v2.9.3: Tarjeta inspectora de metadatos (hora, decibeles, certeza IA y navegación entre eventos)',
+      'v2.9.3: Reproducción continua nocturna (de corrido) y viaje fluido con la barra de progreso',
+      'v2.9.3: Eliminación de audios aislados de 4 segundos e integración directa al reproductor',
+      'v2.9.2: Solución definitiva al error de audio con formato nativo PCM 16-bit 16000 Hz',
       'v2.9.2: Restauración de los 20-25 eventos acústicos realistas en todas las noches',
       'v2.9.2: Rediseño total de la pestaña Audios Nocturnos para Adultos Mayores (selector de días y reproductor gigante)',
       'v2.9.1: Corrección completa de reproducción de audio sin bloqueos de telemetría',
