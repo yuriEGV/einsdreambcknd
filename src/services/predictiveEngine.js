@@ -165,7 +165,10 @@ export function evaluateEinsdreamScore({
     // Compara el sueño real con el target del usuario (o 8h)
     const deficitMinutes = actualSleepMinutes - targetSleepMinutes;
     const durPenalty = Math.abs(deficitMinutes);
-    const durationScore = Math.max(10, Math.min(100, Math.round(100 - durPenalty * 0.42)));
+    let durationScore = Math.max(10, Math.min(100, Math.round(100 - durPenalty * 0.42)));
+    if (actualSleepMinutes < 300) {
+        durationScore = Math.min(60, Math.max(15, Math.round((actualSleepMinutes / targetSleepMinutes) * 100)));
+    }
 
     // Pilar 3: Calidad del Sueño (30% Ponderación)
     // Deep sleep ratio (ideal 18-25%), REM ratio (ideal 18-25%), Efficiency (>85%), y ausencia de ronquidos (<5%)
@@ -177,7 +180,14 @@ export function evaluateEinsdreamScore({
     const effScore = Math.min(100, Math.max(20, sleepEfficiency));
     const peaceScore = Math.max(20, Math.min(100, Math.round(100 - snorePercentage * 3.5)));
 
-    const qualityScore = Math.round(deepScore * 0.35 + remScore * 0.25 + effScore * 0.25 + peaceScore * 0.15);
+    let rawQuality = Math.round(deepScore * 0.35 + remScore * 0.25 + effScore * 0.25 + peaceScore * 0.15);
+    // Si durmió menos de 5 horas (<300m) o déficit severo (>120m), la calidad no puede ser alta
+    if (actualSleepMinutes < 300 || deficitMinutes <= -120) {
+        rawQuality = Math.min(52, Math.max(15, rawQuality - 30));
+    } else if (actualSleepMinutes < 390 || deficitMinutes <= -45) {
+        rawQuality = Math.min(75, Math.max(25, rawQuality - 15));
+    }
+    const qualityScore = rawQuality;
 
     // Einsdream Score Global (Ponderación 40% Regularidad, 30% Duración, 30% Calidad)
     const totalScore = Math.min(100, Math.max(10, Math.round(
@@ -196,14 +206,17 @@ export function evaluateEinsdreamScore({
 
     // ── 6+ DIMENSIONES DEL DESCANSO (0 - 100) ─────────────────────────────────
     const dimensions = {
-        duration: Math.min(100, Math.max(15, Math.round((actualSleepMinutes / 480) * 100))),
+        duration: durationScore,
         deepSleep: deepScore,
         regularity: regularityScore,
         efficiency: sleepEfficiency,
         cardioRecovery: Math.min(100, Math.max(20, Math.round(hrvSdann * 0.85 + hrvGain * 0.5))),
         acousticPeace: peaceScore,
-        remSleep: remScore
+        remSleep: remScore,
+        quality: qualityScore
     };
+
+    const maxPeakDb = Math.max(0, ...correlatedEvents.map(e => e.intensityDb || Math.abs(e.peakDb || 0)));
 
     return {
         einsdreamScore: {
@@ -211,6 +224,9 @@ export function evaluateEinsdreamScore({
             regularityScore,
             durationScore,
             qualityScore,
+            regularidadScore: regularityScore,
+            duracionScore: durationScore,
+            calidadScore: qualityScore,
             ratingStars,
             deficitMinutes,
             irregularityMinutes
@@ -227,7 +243,11 @@ export function evaluateEinsdreamScore({
         snoreMetrics: {
             snorePercentage,
             totalSnoreMinutes,
+            snoreDurationMinutes: totalSnoreMinutes,
+            totalSnoreEvents: snoreEvents.length,
             snoreEventsCount: snoreEvents.length,
+            peakSnoreDb: maxPeakDb,
+            maxDb: maxPeakDb,
             coughEventsCount: coughEvents.length,
             irregularityIndex: irregularityMinutes
         },
@@ -350,14 +370,38 @@ function recent14DaysTable(sessions, targetMinutes) {
         const defM = Math.abs(deficit) % 60;
         const defStr = `${deficit >= 0 ? '+' : '-'}${defH}:${String(defM).padStart(2, '0')}`;
 
+        let startHHMM = '--:--';
+        let endHHMM = '--:--';
+        if (s.startTime) startHHMM = dateToHHMM(s.startTime);
+        if (s.endTime) endHHMM = dateToHHMM(s.endTime);
+        const schedule = (startHHMM !== '--:--' && endHHMM !== '--:--') ? `${startHHMM} - ${endHHMM}` : 'Noche';
+
+        const eventsCount = s.eventsCount !== undefined
+            ? s.eventsCount
+            : (s.soundEvents ? s.soundEvents.length : (s.audioEventsCount !== undefined ? s.audioEventsCount : (Array.isArray(s.audioEvents) ? s.audioEvents.length : 0)));
+
+        let quality = s.quality;
+        if (!quality) {
+            if (dur < 300 || deficit <= -120) {
+                quality = 'Insuficiente';
+            } else if (dur < 390 || deficit <= -30) {
+                quality = eventsCount > 15 ? 'Interrumpida' : (eventsCount > 5 ? 'Moderada' : 'Regular');
+            } else {
+                quality = eventsCount > 15 ? 'Interrumpida' : (eventsCount > 5 ? 'Moderada' : (eventsCount > 0 ? 'Tranquila' : 'Óptima'));
+            }
+        }
+
         return {
             date,
-            dayName: new Date(date).toLocaleDateString('es-ES', { weekday: 'short' }),
+            dayName: new Date(date + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'short' }),
+            schedule,
             sleepHours: `${h}:${String(m).padStart(2, '0')}`,
             deficitHours: defStr,
             deficitRaw: deficit,
             deepSleepPct: `${deepPct}%`,
-            stars: (s.einsdreamScore && s.einsdreamScore.ratingStars) || 3
+            eventsCount,
+            quality,
+            stars: (s.einsdreamScore && s.einsdreamScore.ratingStars) || (dur < 300 ? 2 : 4)
         };
     });
 }

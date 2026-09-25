@@ -107,11 +107,38 @@ export const syncNightSession = async (req, res) => {
             baselineProfile: sleepProfile
         });
 
-        // Use evaluated metrics, allowing client overrides if provided
-        const finalScore = clientScore || evaluation.einsdreamScore;
-        const finalDimensions = clientDimensions || evaluation.dimensions;
+        // Use evaluated metrics, ensuring complete normalization for web & mobile
+        const evaluatedSnore = evaluation.snoreMetrics || {};
+        const snoreCountComputed = enumeratedEvents.filter(e => e.type === 'snore' || e.eventType === 'snore').length;
+        const maxDbComputed = Math.max(0, ...enumeratedEvents.map(e => e.intensityDb || Math.abs(e.peakDb || 0)));
+
+        const finalSnore = {
+            ...evaluatedSnore,
+            ...(clientSnore || {}),
+            totalSnoreEvents: clientSnore?.totalSnoreEvents ?? clientSnore?.snoreEventsCount ?? evaluatedSnore.totalSnoreEvents ?? snoreCountComputed,
+            snoreEventsCount: clientSnore?.snoreEventsCount ?? clientSnore?.totalSnoreEvents ?? evaluatedSnore.snoreEventsCount ?? snoreCountComputed,
+            snoreDurationMinutes: clientSnore?.snoreDurationMinutes ?? clientSnore?.totalSnoreMinutes ?? evaluatedSnore.snoreDurationMinutes ?? evaluatedSnore.totalSnoreMinutes ?? Math.round(snoreCountComputed * 2.5),
+            totalSnoreMinutes: clientSnore?.totalSnoreMinutes ?? clientSnore?.snoreDurationMinutes ?? evaluatedSnore.totalSnoreMinutes ?? Math.round(snoreCountComputed * 2.5),
+            peakSnoreDb: clientSnore?.peakSnoreDb ?? clientSnore?.maxDb ?? evaluatedSnore.peakSnoreDb ?? maxDbComputed,
+            maxDb: clientSnore?.maxDb ?? clientSnore?.peakSnoreDb ?? evaluatedSnore.maxDb ?? maxDbComputed
+        };
+
+        const finalScore = {
+            ...(evaluation.einsdreamScore || {}),
+            ...(clientScore || {}),
+            regularidadScore: clientScore?.regularidadScore ?? clientScore?.regularityScore ?? clientScore?.regularity ?? evaluation.einsdreamScore?.regularidadScore ?? 85,
+            duracionScore: clientScore?.duracionScore ?? clientScore?.durationScore ?? clientScore?.duration ?? evaluation.einsdreamScore?.duracionScore ?? 90,
+            calidadScore: clientScore?.calidadScore ?? clientScore?.qualityScore ?? clientScore?.quality ?? evaluation.einsdreamScore?.calidadScore ?? 85,
+        };
+
+        const finalDimensions = {
+            ...(evaluation.dimensions || {}),
+            ...(clientDimensions || {}),
+            duration: typeof clientDimensions?.duration === 'number' ? clientDimensions.duration : (clientDimensions?.duration?.score ?? evaluation.dimensions?.duration ?? finalScore.duracionScore),
+            regularity: typeof clientDimensions?.regularity === 'number' ? clientDimensions.regularity : (clientDimensions?.regularity?.score ?? evaluation.dimensions?.regularity ?? finalScore.regularidadScore),
+            quality: typeof clientDimensions?.quality === 'number' ? clientDimensions.quality : (clientDimensions?.quality?.score ?? evaluation.dimensions?.quality ?? finalScore.calidadScore)
+        };
         const finalCardio = clientCardio || evaluation.cardiovascular;
-        const finalSnore = clientSnore || evaluation.snoreMetrics;
 
         // Calculate summary metrics if not provided
         let calcSummary = { ...nightSummary };
