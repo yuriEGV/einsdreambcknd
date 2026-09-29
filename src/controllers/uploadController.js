@@ -361,14 +361,14 @@ export const streamAudioSession = async (req, res) => {
                     'Content-Range': `bytes ${start}-${end}/${fileSize}`,
                     'Accept-Ranges': 'bytes',
                     'Content-Length': chunksize,
-                    'Content-Type': 'audio/m4a',
+                    'Content-Type': 'audio/mp4',
                 };
                 res.writeHead(206, head);
                 file.pipe(res);
             } else {
                 const head = {
                     'Content-Length': fileSize,
-                    'Content-Type': 'audio/m4a',
+                    'Content-Type': 'audio/mp4',
                     'Accept-Ranges': 'bytes'
                 };
                 res.writeHead(200, head);
@@ -392,14 +392,14 @@ export const streamAudioSession = async (req, res) => {
                     'Content-Range': `bytes ${start}-${end}/${fileSize}`,
                     'Accept-Ranges': 'bytes',
                     'Content-Length': chunksize,
-                    'Content-Type': 'audio/m4a',
+                    'Content-Type': 'audio/mp4',
                 };
                 res.writeHead(206, head);
                 return res.end(buffer.subarray(start, end + 1));
             } else {
                 const head = {
                     'Content-Length': fileSize,
-                    'Content-Type': 'audio/m4a',
+                    'Content-Type': 'audio/mp4',
                     'Accept-Ranges': 'bytes'
                 };
                 res.writeHead(200, head);
@@ -711,3 +711,4 @@ export const deleteSession = async (req, res) => {
         res.status(500).json({ message: 'Error deleting session', error: error.message });
     }
 };
+
