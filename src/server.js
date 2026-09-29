@@ -68,6 +68,7 @@ app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 const getApkFileToServe = () => {
   const candidates = [
+    path.join(__dirname, '../public/einsdream-mobile-v2.9.8.apk'),
     path.join(__dirname, '../public/einsdream-mobile-v2.9.7.apk'),
     path.join(__dirname, '../public/einsdream-mobile-v2.9.6.apk'),
     path.join(__dirname, '../public/einsdream-mobile-v2.9.5.apk'),
@@ -87,6 +88,7 @@ const getApkFileToServe = () => {
 
 // Specific handler for versioned APK downloads (serves the latest APK for all version queries)
 app.get([
+  '/public/einsdream-mobile-v2.9.8.apk',
   '/public/einsdream-mobile-v2.9.7.apk',
   '/public/einsdream-mobile-v2.9.6.apk',
   '/public/einsdream-mobile-v2.9.5.apk',
@@ -113,7 +115,7 @@ app.get([
   res.setHeader('Expires', '0');
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
   const fileToServe = getApkFileToServe();
-  res.download(fileToServe, 'einsdream-mobile-v2.9.7.apk');
+  res.download(fileToServe, 'einsdream-mobile-v2.9.8.apk');
 });
 
 // Wildcard regex handler: any /public/einsdream-mobile*.apk request is served reliably
@@ -123,7 +125,7 @@ app.get(/^\/public\/einsdream-mobile.*\.apk$/, (req, res) => {
   res.setHeader('Expires', '0');
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
   const fileToServe = getApkFileToServe();
-  res.download(fileToServe, 'einsdream-mobile-v2.9.7.apk');
+  res.download(fileToServe, 'einsdream-mobile-v2.9.8.apk');
 });
 
 // Serve static files from the public directory
@@ -138,10 +140,10 @@ app.get(['/download/apk', '/download/apk/:version'], (req, res) => {
   const fileToServe = getApkFileToServe();
   const targetFilename = req.params.version
     ? `einsdream-mobile-v${req.params.version}.apk`
-    : 'einsdream-mobile-v2.9.7.apk';
+    : 'einsdream-mobile-v2.9.8.apk';
   res.download(fileToServe, targetFilename, (err) => {
     if (err && !res.headersSent) {
-      res.redirect('/public/einsdream-mobile-v2.9.7.apk');
+      res.redirect('/public/einsdream-mobile-v2.9.8.apk');
     }
   });
 });
@@ -150,13 +152,18 @@ app.get(['/download/apk', '/download/apk/:version'], (req, res) => {
 app.get('/api/app-version', (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.json({
-    version: "2.9.7",
-    versionCode: 21,
+    version: "2.9.8",
+    versionCode: 22,
     apkUrl: '/download/apk',
-    apkFilename: 'einsdream-mobile-v2.9.7.apk',
-    releaseDate: '2026-09-25',
+    apkFilename: 'einsdream-mobile-v2.9.8.apk',
+    releaseDate: '2026-09-29',
     architecture: 'EinsDream 3.0 (Continuous Audio + Acoustic Event Timeline + Senior UI)',
     changelog: [
+      'v2.9.8: Corrige duplicación de días en selector de noches (deduplicación por sessionDate)',
+      'v2.9.8: HORA REGISTRADA muestra hora real del reloj, no offset relativo (+31:09)',
+      'v2.9.8: Inicio/Fin de noche usa timestamps reales de los botones presionados',
+      'v2.9.8: Fechas de madrugada asignadas correctamente con hora local (no UTC)',
+      'v2.9.8: Estadísticas de sueño ancladas al tiempo real monitoreado (startTime/endTime exactos)',
       'v2.9.7: Ajuste riguroso de Calidad y Score condicionado a horas reales vs meta (déficit < 5h catalogado como Insuficiente)',
       'v2.9.7: Horarios nocturnos realistas sincronizados con el perfil biológico del usuario',
       'v2.9.7: Sincronización precisa de ronquidos, eventos acústicos y 3 pilares con la plataforma web',
