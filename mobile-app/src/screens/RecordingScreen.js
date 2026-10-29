@@ -1820,6 +1820,7 @@ export default function RecordingScreen({ token, onLogout }) {
             correlated.startTimestamp   = startTimeMs;
             correlated.endTimestamp     = endTimeMs;
             correlated.totalDurationMs  = effectiveDurationMs;
+            correlated.tzOffsetMin      = -new Date().getTimezoneOffset();
 
             if (pairSessionResult) {
                 correlated.pairData = pairSessionResult;
@@ -2212,17 +2213,20 @@ export default function RecordingScreen({ token, onLogout }) {
             }
 
             let successCount = 0;
+            let lastError = null;
             for (const session of toSync.slice(0, 10)) {
                 try {
                     // Formato EinsDream 3.0: Solo Telemetría JSON (< 20 KB), CERO audio a la nube
+                    // Conforme a MN-SDR-001 (Nivel 1 Eventos Originales Acústicos y Movimiento)
                     const soundEvts = (session.soundEvents || session.correlatedEvents || []).map(e => ({
                         offsetMs: e.offsetMs !== undefined ? e.offsetMs : (e.relativeMs !== undefined ? e.relativeMs : 0),
                         timeLabel: e.timeLabel || '',
                         type: e.type || e.eventType || 'snore',
                         eventType: e.eventType || e.type || 'snore',
-                        peakDb: e.peakDb !== undefined ? e.peakDb : -Math.abs(e.intensityDb || 25),
-                        intensityDb: e.intensityDb || Math.abs(e.peakDb || 55),
-                        duration: e.duration || 5
+                        peakDb: e.peakDb !== undefined ? e.peakDb : (e.intensityDb !== undefined ? -Math.abs(e.intensityDb) : -30),
+                        intensityDb: e.intensityDb !== undefined ? e.intensityDb : (e.peakDb !== undefined ? Math.abs(e.peakDb) : 45),
+                        duration: typeof e.duration === 'number' && e.duration > 0 ? e.duration : 3.0,
+                        confidence: typeof e.confidence === 'number' ? e.confidence : 90
                     }));
 
                     const pauseInts = (session.pauseIntervals || session.pauseSegments || []).map(p => ({
@@ -2231,17 +2235,20 @@ export default function RecordingScreen({ token, onLogout }) {
                         durationMs: p.durationMs || 0
                     }));
 
+                    const tzOffset = session.tzOffsetMin !== undefined ? session.tzOffsetMin : -new Date().getTimezoneOffset();
+
                     const payload = {
                         sessionId: session.sessionId || `night_${(session.sessionDate || 'session').replace(/-/g, '_')}`,
                         sessionDate: session.sessionDate,
                         startTime: session.startTime,
                         endTime: session.endTime,
+                        tzOffsetMin: tzOffset,
                         totalDurationMs: session.totalDurationMs || (session.sleepSummary?.durationMinutes ? session.sleepSummary.durationMinutes * 60000 : 0),
                         pauseIntervals: pauseInts,
                         soundEvents: soundEvts,
                         summary: {
-                            snoreCount: session.summary?.snoreCount ?? soundEvts.filter(e => e.eventType === 'snore').length,
-                            coughCount: session.summary?.coughCount ?? soundEvts.filter(e => e.eventType === 'cough').length,
+                            snoreCount: session.summary?.snoreCount ?? soundEvts.filter(e => e.eventType === 'snore' || e.type === 'snore').length,
+                            coughCount: session.summary?.coughCount ?? soundEvts.filter(e => e.eventType === 'cough' || e.type === 'cough').length,
                             totalPausedMinutes: session.summary?.totalPausedMinutes ?? Math.round(pauseInts.reduce((acc, p) => acc + ((p.durationMs || (p.endMs - p.startMs)) / 60000), 0))
                         },
                         einsdreamScore: session.einsdreamScore,
@@ -2258,14 +2265,21 @@ export default function RecordingScreen({ token, onLogout }) {
                     successCount++;
                 } catch (err) {
                     console.warn('[syncStatsToServer night error]', err.message);
+                    lastError = err.response?.data?.message || err.message;
                 }
             }
 
-            Alert.alert(
-                '✅ Sincronizado con Sistema Web',
-                `${successCount} de ${Math.min(toSync.length, 10)} noches enviadas al dashboard (EinsDream 3.0 JSON Telemetría).
-El sistema web ya puede procesar tus estadísticas.`
-            );
+            if (successCount > 0) {
+                Alert.alert(
+                    '✅ Sincronizado con Sistema Web (MN-SDR-001)',
+                    `${successCount} de ${Math.min(toSync.length, 10)} noches enviadas al dashboard (EinsDream 3.0 JSON Telemetría).\nEl sistema web ya generó los indicadores normativos y cálculos de sueño.`
+                );
+            } else {
+                Alert.alert(
+                    '⚠️ Error al Sincronizar',
+                    'No se pudieron enviar las noches al dashboard. ' + (lastError ? ('Detalle: ' + lastError) : 'Verifica tu conexión y sesión.')
+                );
+            }
         } catch (e) {
             Alert.alert('Error de sincronización', 'Verifica tu conexión a internet.');
         } finally {
@@ -2273,7 +2287,7 @@ El sistema web ya puede procesar tus estadísticas.`
         }
     };
 
-    // ─── Renderizado de Pestañas ──────────────────────────────────────────────
+        // ─── Renderizado de Pestañas ──────────────────────────────────────────────
     return (
         <ScrollView contentContainerStyle={s.container} keyboardShouldPersistTaps="handled">
             {/* Cabecera Principal con Versión v2.3.2 */}

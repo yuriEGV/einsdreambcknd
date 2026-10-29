@@ -77,6 +77,10 @@ const correlatedEventSchema = new mongoose.Schema({
     },
     notes: {
         type: String
+    },
+    // Confianza del DETECTOR en la detección (0-1), no probabilidad de despertar ni de enfermedad
+    confidence: {
+        type: Number
     }
 }, { _id: true });
 
@@ -216,7 +220,11 @@ const nightSessionSchema = new mongoose.Schema({
         offsetMs: { type: Number },
         timeLabel: { type: String },
         type: { type: String },
+        eventType: { type: String },
         peakDb: { type: Number },
+        intensityDb: { type: Number },
+        duration: { type: Number },
+        confidence: { type: Number },
         timestamp: { type: Date }
     }],
     summary: {
@@ -228,6 +236,19 @@ const nightSessionSchema = new mongoose.Schema({
         type: Boolean,
         default: false
     },
+    // Huso horario del dispositivo (minutos respecto de UTC, ej. Chile verano = -180)
+    tzOffsetMin: { type: Number },
+    // MN-SDR-001 §7.3: valoración subjetiva al despertar, almacenada separada de las mediciones instrumentales
+    subjective: {
+        restfulness: { type: Number, min: 1, max: 5 },
+        daytimeSleepiness: { type: Number, min: 1, max: 5 },
+        energy: { type: Number, min: 1, max: 5 },
+        perceivedInterruptions: { type: Number, min: 0, max: 5 },
+        notes: { type: String, maxlength: 500 },
+        submittedAt: { type: Date }
+    },
+    // MN-SDR-001 §11: versión del algoritmo que generó los indicadores al sincronizar
+    sdrSnapshot: { type: mongoose.Schema.Types.Mixed },
     createdAt: {
         type: Date,
         default: Date.now

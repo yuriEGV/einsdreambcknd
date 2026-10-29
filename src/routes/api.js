@@ -78,10 +78,15 @@ router.get('/sessions/night/:date', authMiddleware, uploadController.getNightSes
 // ==================== HEALTH CONNECT & NIGHT ENGINE SESSIONS ====================
 router.post('/night-sessions', authMiddleware, nightSessionController.syncNightSession);
 router.get('/night-sessions/history', authMiddleware, nightSessionController.getNightSessionsHistory);
+router.get('/night-sessions/reports', authMiddleware, nightSessionController.getNightSessionsHistory);
 router.get('/night-sessions/trends', authMiddleware, nightSessionController.getTrendsBenchmark);
 router.get('/night-sessions/predict-bedtime', authMiddleware, nightSessionController.getOptimalBedtime);
 router.get('/night-sessions/latest-analysis', authMiddleware, nightSessionController.getLatestAnalysis);
 router.get('/night-sessions/date/:date', authMiddleware, nightSessionController.getNightSessionByDate);
+router.get('/night-sessions/:idOrDate/report', authMiddleware, nightSessionController.getSdrReport);
+router.post('/night-sessions/:idOrDate/subjective', authMiddleware, nightSessionController.saveSubjectiveEvaluation);
+router.post('/night-sessions/seed-normative', authMiddleware, nightSessionController.seedNormativeSample);
+router.get('/sdr/catalog', nightSessionController.getSdrCatalog);
 router.get('/night-sessions/:id', authMiddleware, nightSessionController.getNightSessionById);
 
 // ==================== SLEEP TEST & BASELINE PROFILE ====================
